@@ -68,6 +68,7 @@ struct TDescribeTableParams {
   4: optional string user_ip    // deprecated
   5: optional Types.TUserIdentity current_user_ident // to replace the user and user ip
   6: optional bool show_hidden_columns = false
+  7: optional string catalog
 }
 
 // Results of a call to describeTable()
@@ -705,4 +706,6 @@ service FrontendService {
     Status.TStatus snapshotLoaderReport(1: TSnapshotLoaderReportRequest request)
 
     TFrontendPingFrontendResult ping(1: TFrontendPingFrontendRequest request)
+
+    AgentService.TGetStoragePolicyResult refreshStoragePolicy()
 }

@@ -18,7 +18,7 @@
 package org.apache.doris.nereids.trees.expressions;
 
 import org.apache.doris.catalog.Column;
-import org.apache.doris.nereids.trees.NodeType;
+import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 import org.apache.doris.nereids.types.DataType;
 
 import com.google.common.base.Preconditions;
@@ -51,7 +51,7 @@ public class SlotReference extends Slot {
      * @param qualifier slot reference qualifier
      */
     public SlotReference(ExprId exprId, String name, DataType dataType, boolean nullable, List<String> qualifier) {
-        super(NodeType.SLOT_REFERENCE);
+        super(ExpressionType.SLOT_REFERENCE);
         this.exprId = exprId;
         this.name = name;
         this.dataType = dataType;
@@ -90,7 +90,7 @@ public class SlotReference extends Slot {
     }
 
     @Override
-    public String sql() {
+    public String toSql() {
         return name;
     }
 
@@ -124,9 +124,8 @@ public class SlotReference extends Slot {
         return Objects.hash(exprId, name, qualifier, nullable);
     }
 
-    // TODO: return real org.apache.doris.catalog.Column
     public Column getColumn() {
-        return null;
+        return new Column(name, dataType.toCatalogDataType());
     }
 
     @Override
@@ -138,5 +137,12 @@ public class SlotReference extends Slot {
     public Expression withChildren(List<Expression> children) {
         Preconditions.checkArgument(children.size() == 0);
         return this;
+    }
+
+    public Slot withNullable(boolean newNullable) {
+        if (this.nullable == newNullable) {
+            return this;
+        }
+        return new SlotReference(exprId, name, dataType, newNullable, qualifier);
     }
 }

@@ -17,14 +17,16 @@
 
 package org.apache.doris.nereids.analyzer;
 
-import org.apache.doris.nereids.trees.NodeType;
+import org.apache.doris.nereids.exceptions.UnboundException;
 import org.apache.doris.nereids.trees.expressions.Expression;
-import org.apache.doris.nereids.trees.expressions.ExpressionVisitor;
+import org.apache.doris.nereids.trees.expressions.ExpressionType;
+import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 
 import com.google.common.base.Joiner;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * Expression for unbound function.
@@ -35,7 +37,7 @@ public class UnboundFunction extends Expression implements Unbound {
     private final boolean isDistinct;
 
     public UnboundFunction(String name, boolean isDistinct, List<Expression> arguments) {
-        super(NodeType.UNBOUND_FUNCTION, arguments.toArray(new Expression[0]));
+        super(ExpressionType.UNBOUND_FUNCTION, arguments.toArray(new Expression[0]));
         this.name = Objects.requireNonNull(name, "name can not be null");
         this.isDistinct = isDistinct;
     }
@@ -50,6 +52,14 @@ public class UnboundFunction extends Expression implements Unbound {
 
     public List<Expression> getArguments() {
         return children();
+    }
+
+    @Override
+    public String toSql() throws UnboundException {
+        String params = children.stream()
+                .map(Expression::toSql)
+                .collect(Collectors.joining(", "));
+        return name + "(" + (isDistinct ? "DISTINCT " : "")  + params + ")";
     }
 
     @Override

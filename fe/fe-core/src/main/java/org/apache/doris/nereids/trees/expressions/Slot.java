@@ -17,19 +17,21 @@
 
 package org.apache.doris.nereids.trees.expressions;
 
-import org.apache.doris.nereids.trees.NodeType;
-
 /**
  * Abstract class for all slot in expression.
  */
 public abstract class Slot extends NamedExpression implements LeafExpression {
 
-    public Slot(NodeType type) {
+    public Slot(ExpressionType type) {
         super(type);
     }
 
     @Override
     public Slot toSlot() {
         return this;
+    }
+
+    public Slot withNullable(boolean newNullable) {
+        throw new RuntimeException("Do not implement");
     }
 }

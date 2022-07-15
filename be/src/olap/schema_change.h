@@ -208,7 +208,8 @@ private:
                           TabletSharedPtr new_tablet, TabletSharedPtr base_tablet) override;
 
     bool _internal_sorting(const std::vector<RowBlock*>& row_block_arr,
-                           const Version& temp_delta_versions, TabletSharedPtr new_tablet,
+                           const Version& temp_delta_versions, int64_t oldest_write_timestamp,
+                           int64_t newest_write_timestamp, TabletSharedPtr new_tablet,
                            SegmentsOverlapPB segments_overlap, RowsetSharedPtr* rowset);
 
     bool _external_sorting(std::vector<RowsetSharedPtr>& src_rowsets, RowsetWriter* rowset_writer,
@@ -232,7 +233,8 @@ private:
                           TabletSharedPtr new_tablet, TabletSharedPtr base_tablet) override;
 
     Status _internal_sorting(const std::vector<std::unique_ptr<vectorized::Block>>& blocks,
-                             const Version& temp_delta_versions, TabletSharedPtr new_tablet,
+                             const Version& temp_delta_versions, int64_t oldest_write_timestamp,
+                             int64_t newest_write_timestamp, TabletSharedPtr new_tablet,
                              RowsetTypePB new_rowset_type, SegmentsOverlapPB segments_overlap,
                              RowsetSharedPtr* rowset);
 
@@ -249,7 +251,8 @@ class SchemaChangeHandler {
 public:
     static Status schema_version_convert(TabletSharedPtr base_tablet, TabletSharedPtr new_tablet,
                                          RowsetSharedPtr* base_rowset, RowsetSharedPtr* new_rowset,
-                                         DescriptorTbl desc_tbl);
+                                         DescriptorTbl desc_tbl,
+                                         const TabletSchema* base_schema_change);
 
     // schema change v2, it will not set alter task in base tablet
     static Status process_alter_tablet_v2(const TAlterTabletReqV2& request);
@@ -303,6 +306,7 @@ private:
         AlterTabletType alter_tablet_type;
         TabletSharedPtr base_tablet;
         TabletSharedPtr new_tablet;
+        TabletSchema* base_tablet_schema = nullptr;
         std::vector<RowsetReaderSharedPtr> ref_rowset_readers;
         DeleteHandler* delete_handler = nullptr;
         std::unordered_map<std::string, AlterMaterializedViewParam> materialized_params_map;
@@ -321,7 +325,7 @@ private:
                                  RowBlockChanger* rb_changer, bool* sc_sorting, bool* sc_directly,
                                  const std::unordered_map<std::string, AlterMaterializedViewParam>&
                                          materialized_function_map,
-                                 DescriptorTbl desc_tbl);
+                                 DescriptorTbl desc_tbl, const TabletSchema* base_tablet_schema);
 
     // Initialization Settings for creating a default value
     static Status _init_column_mapping(ColumnMapping* column_mapping,

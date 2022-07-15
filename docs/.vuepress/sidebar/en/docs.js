@@ -750,6 +750,7 @@ module.exports = [
               "SHOW-CREATE-TABLE",
               "SHOW-CREATE-MATERIALIZED-VIEW",
               "SHOW-DATA",
+              "SHOW-DATA-SKEW",
               "SHOW-DATABASE-ID",
               "SHOW-DATABASES",
               "SHOW-DELETE",
@@ -867,6 +868,7 @@ module.exports = [
       },
       "sql-interception",
       "query-profile",
+      "tracing",
       "optimization",
       {
         title: "Maintenance and Monitor",

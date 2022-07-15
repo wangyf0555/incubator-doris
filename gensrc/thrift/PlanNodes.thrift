@@ -419,6 +419,7 @@ struct TOlapScanNode {
   5: optional string sort_column
   6: optional Types.TKeysType keyType
   7: optional string table_name
+  8: required list<Descriptors.TColumn> columns_desc
 }
 
 struct TEqJoinCondition {
@@ -573,17 +574,8 @@ struct TSortNode {
   // This is the number of rows to skip before returning results
   3: optional i64 offset
 
-  // TODO(lingbin): remove blew, because duplaicate with TSortInfo
-  4: optional list<Exprs.TExpr> ordering_exprs                                   
-  5: optional list<bool> is_asc_order                                            
   // Indicates whether the imposed limit comes DEFAULT_ORDER_BY_LIMIT.           
   6: optional bool is_default_limit                                              
-  // Indicates, for each expr, if nulls should be listed first or last. This is  
-  // independent of is_asc_order.                                                
-  7: optional list<bool> nulls_first                                             
-  // Expressions evaluated over the input row that materialize the tuple to be so
-  // Contains one expr per slot in the materialized tuple.                       
-  8: optional list<Exprs.TExpr> sort_tuple_slot_exprs                            
 }
 
 enum TAnalyticWindowType {

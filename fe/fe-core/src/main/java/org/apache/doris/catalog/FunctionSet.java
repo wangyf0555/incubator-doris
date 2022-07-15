@@ -252,6 +252,9 @@ public class FunctionSet<T> {
                     .put(Type.DOUBLE, Type.DOUBLE)
                     .put(Type.LARGEINT, Type.LARGEINT)
                     .put(Type.DECIMALV2, Type.DECIMALV2)
+                    .put(Type.DECIMAL32, Type.DECIMAL32)
+                    .put(Type.DECIMAL64, Type.DECIMAL64)
+                    .put(Type.DECIMAL128, Type.DECIMAL128)
                     .build();
 
     private static final Map<Type, String> MULTI_DISTINCT_INIT_SYMBOL =
@@ -366,6 +369,9 @@ public class FunctionSet<T> {
                     .put(Type.FLOAT, Type.DOUBLE)
                     .put(Type.DOUBLE, Type.DOUBLE)
                     .put(Type.DECIMALV2, Type.DECIMALV2)
+                    .put(Type.DECIMAL32, Type.DECIMAL32)
+                    .put(Type.DECIMAL64, Type.DECIMAL64)
+                    .put(Type.DECIMAL128, Type.DECIMAL128)
                     .build();
 
     private static final Map<Type, String> STDDEV_INIT_SYMBOL =
@@ -855,6 +861,8 @@ public class FunctionSet<T> {
     //TODO(weixiang): is quantile_percent can be replaced by approx_percentile?
     public static final String QUANTILE_PERCENT = "quantile_percent";
     public static final String TO_QUANTILE_STATE = "to_quantile_state";
+    public static final String COLLECT_LIST = "collect_list";
+    public static final String COLLECT_SET = "collect_set";
 
     private static final Map<Type, String> ORTHOGONAL_BITMAP_INTERSECT_INIT_SYMBOL =
             ImmutableMap.<Type, String>builder()
@@ -1263,6 +1271,11 @@ public class FunctionSet<T> {
                                               boolean varArgs, Type ... args) {
         ArrayList<Type> argsType = new ArrayList<Type>();
         for (Type type : args) {
+            // only to prevent olap scan node use array expr to find a fake symbol
+            // TODO: delete the code after we remove origin exec engine
+            if (type.isArrayType()) {
+                symbol = "_ZN5doris19array_fake_functionEPN9doris_udf15FunctionContextE";
+            }
             argsType.add(type);
         }
         addBuiltinBothScalaAndVectorized(ScalarFunction.createBuiltin(
@@ -1514,6 +1527,45 @@ public class FunctionSet<T> {
                         null,
                         prefix + "",
                         false, true, true, true));
+            } else if (t.equals(Type.DECIMAL32)) {
+                // vectorized
+                addBuiltin(AggregateFunction.createBuiltin("multi_distinct_count", Lists.newArrayList(t),
+                        Type.BIGINT,
+                        Type.DECIMAL32,
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        null,
+                        null,
+                        prefix + "",
+                        false, true, true, true));
+            } else if (t.equals(Type.DECIMAL64)) {
+                // vectorized
+                addBuiltin(AggregateFunction.createBuiltin("multi_distinct_count", Lists.newArrayList(t),
+                        Type.BIGINT,
+                        Type.DECIMAL64,
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        null,
+                        null,
+                        prefix + "",
+                        false, true, true, true));
+            } else if (t.equals(Type.DECIMAL128)) {
+                // vectorized
+                addBuiltin(AggregateFunction.createBuiltin("multi_distinct_count", Lists.newArrayList(t),
+                        Type.BIGINT,
+                        Type.DECIMAL128,
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        null,
+                        null,
+                        prefix + "",
+                        false, true, true, true));
             }
 
             // sum in multi distinct
@@ -1558,6 +1610,43 @@ public class FunctionSet<T> {
                 addBuiltin(AggregateFunction.createBuiltin("multi_distinct_sum", Lists.newArrayList(t),
                         MULTI_DISTINCT_SUM_RETURN_TYPE.get(t),
                         Type.DECIMALV2,
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        null,
+                        null,
+                        prefix + "",
+                        false, true, true, true));
+            } else if (t.equals(Type.DECIMAL32)) {
+                // vectorized
+                addBuiltin(AggregateFunction.createBuiltin("multi_distinct_sum", Lists.newArrayList(t),
+                        MULTI_DISTINCT_SUM_RETURN_TYPE.get(t),
+                        Type.DECIMAL32,
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        null,
+                        null,
+                        prefix + "",
+                        false, true, true, true));
+            } else if (t.equals(Type.DECIMAL64)) {
+                addBuiltin(AggregateFunction.createBuiltin("multi_distinct_sum", Lists.newArrayList(t),
+                        MULTI_DISTINCT_SUM_RETURN_TYPE.get(t),
+                        Type.DECIMAL64,
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        prefix + "",
+                        null,
+                        null,
+                        prefix + "",
+                        false, true, true, true));
+            } else if (t.equals(Type.DECIMAL128)) {
+                addBuiltin(AggregateFunction.createBuiltin("multi_distinct_sum", Lists.newArrayList(t),
+                        MULTI_DISTINCT_SUM_RETURN_TYPE.get(t),
+                        Type.DECIMAL128,
                         prefix + "",
                         prefix + "",
                         prefix + "",
@@ -2013,6 +2102,27 @@ public class FunctionSet<T> {
                     prefix + "10sum_removeIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
                     null, false, true, false, true));
             addBuiltin(AggregateFunction.createBuiltin(name,
+                    Lists.<Type>newArrayList(Type.DECIMAL32), Type.DECIMAL32, Type.DECIMAL32, initNull,
+                    prefix + "3sumIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    prefix + "3sumIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    null, null,
+                    prefix + "10sum_removeIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    null, false, true, false, true));
+            addBuiltin(AggregateFunction.createBuiltin(name,
+                    Lists.<Type>newArrayList(Type.DECIMAL64), Type.DECIMAL64, Type.DECIMAL64, initNull,
+                    prefix + "3sumIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    prefix + "3sumIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    null, null,
+                    prefix + "10sum_removeIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    null, false, true, false, true));
+            addBuiltin(AggregateFunction.createBuiltin(name,
+                    Lists.<Type>newArrayList(Type.DECIMAL128), Type.DECIMAL128, Type.DECIMAL128, initNull,
+                    prefix + "3sumIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    prefix + "3sumIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    null, null,
+                    prefix + "10sum_removeIN9doris_udf12DecimalV2ValES3_EEvPNS2_15FunctionContextERKT_PT0_",
+                    null, false, true, false, true));
+            addBuiltin(AggregateFunction.createBuiltin(name,
                     Lists.<Type>newArrayList(Type.LARGEINT), Type.LARGEINT, Type.LARGEINT, initNull,
                     prefix + "3sumIN9doris_udf11LargeIntValES3_EEvPNS2_15FunctionContextERKT_PT0_",
                     prefix + "3sumIN9doris_udf11LargeIntValES3_EEvPNS2_15FunctionContextERKT_PT0_",
@@ -2215,6 +2325,17 @@ public class FunctionSet<T> {
                 prefix + "26percentile_approx_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
                 false, true, false, true));
 
+        // collect_list
+        Type[] arraySubTypes = {Type.BOOLEAN, Type.SMALLINT, Type.TINYINT, Type.INT, Type.BIGINT, Type.LARGEINT,
+                Type.FLOAT, Type.DOUBLE, Type.DATE, Type.DATETIME, Type.DECIMALV2, Type.DECIMAL32, Type.DECIMAL64,
+                Type.DECIMAL128, Type.VARCHAR, Type.STRING};
+        for (Type t : arraySubTypes) {
+            addBuiltin(AggregateFunction.createBuiltin(COLLECT_LIST, Lists.newArrayList(t), new ArrayType(t), t,
+                    "", "", "", "", "", true, false, true, true));
+            addBuiltin(AggregateFunction.createBuiltin(COLLECT_SET, Lists.newArrayList(t), new ArrayType(t), t,
+                    "", "", "", "", "", true, false, true, true));
+        }
+
         // Avg
         // TODO: switch to CHAR(sizeof(AvgIntermediateType) when that becomes available
         addBuiltin(AggregateFunction.createBuiltin("avg",
@@ -2293,6 +2414,36 @@ public class FunctionSet<T> {
                 false, true, false, true));
         addBuiltin(AggregateFunction.createBuiltin("avg",
                 Lists.<Type>newArrayList(Type.DECIMALV2), Type.DECIMALV2, Type.DECIMALV2,
+                prefix + "18decimalv2_avg_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
+                prefix + "20decimalv2_avg_updateEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
+                prefix + "19decimalv2_avg_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
+                prefix + "23decimalv2_avg_serializeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "23decimalv2_avg_get_valueEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "20decimalv2_avg_removeEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
+                prefix + "22decimalv2_avg_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                false, true, false, true));
+        addBuiltin(AggregateFunction.createBuiltin("avg",
+                Lists.<Type>newArrayList(Type.DECIMAL32), Type.DECIMAL32, Type.DECIMAL32,
+                prefix + "18decimalv2_avg_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
+                prefix + "20decimalv2_avg_updateEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
+                prefix + "19decimalv2_avg_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
+                prefix + "23decimalv2_avg_serializeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "23decimalv2_avg_get_valueEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "20decimalv2_avg_removeEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
+                prefix + "22decimalv2_avg_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                false, true, false, true));
+        addBuiltin(AggregateFunction.createBuiltin("avg",
+                Lists.<Type>newArrayList(Type.DECIMAL64), Type.DECIMAL64, Type.DECIMAL64,
+                prefix + "18decimalv2_avg_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
+                prefix + "20decimalv2_avg_updateEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
+                prefix + "19decimalv2_avg_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
+                prefix + "23decimalv2_avg_serializeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "23decimalv2_avg_get_valueEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "20decimalv2_avg_removeEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
+                prefix + "22decimalv2_avg_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                false, true, false, true));
+        addBuiltin(AggregateFunction.createBuiltin("avg",
+                Lists.<Type>newArrayList(Type.DECIMAL128), Type.DECIMAL128, Type.DECIMAL128,
                 prefix + "18decimalv2_avg_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
                 prefix + "20decimalv2_avg_updateEPN9doris_udf15FunctionContextERKNS1_12DecimalV2ValEPNS1_9StringValE",
                 prefix + "19decimalv2_avg_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",

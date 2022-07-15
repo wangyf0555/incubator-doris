@@ -17,7 +17,8 @@
 
 package org.apache.doris.nereids.trees.expressions;
 
-import org.apache.doris.nereids.trees.NodeType;
+import org.apache.doris.nereids.exceptions.UnboundException;
+import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 
 import java.util.List;
 import java.util.Objects;
@@ -26,8 +27,7 @@ import java.util.Objects;
  * Compound predicate expression.
  * Such as &&,||,AND,OR.
  */
-public class CompoundPredicate<LEFT_CHILD_TYPE extends Expression, RIGHT_CHILD_TYPE extends Expression>
-        extends Expression implements BinaryExpression<LEFT_CHILD_TYPE, RIGHT_CHILD_TYPE> {
+public class CompoundPredicate extends Expression implements BinaryExpression {
 
     /**
      * Desc: Constructor for CompoundPredicate.
@@ -36,20 +36,19 @@ public class CompoundPredicate<LEFT_CHILD_TYPE extends Expression, RIGHT_CHILD_T
      * @param left  left child of comparison predicate
      * @param right right child of comparison predicate
      */
-    public CompoundPredicate(NodeType type, LEFT_CHILD_TYPE left, RIGHT_CHILD_TYPE right) {
+    public CompoundPredicate(ExpressionType type, Expression left, Expression right) {
         super(type, left, right);
     }
 
     @Override
-    public String sql() {
+    public String toSql() {
         String nodeType = getType().toString();
-        return "(" + left().sql() + " " + nodeType + " " + right().sql() + ")";
+        return "(" + left().toSql() + " " + nodeType + " " + right().toSql() + ")";
     }
 
     @Override
-    public String toString() {
-        String nodeType = getType().toString();
-        return nodeType + "(" + left() + ", " + right() + ")";
+    public boolean nullable() throws UnboundException {
+        return left().nullable() || right().nullable();
     }
 
     @Override
@@ -57,11 +56,9 @@ public class CompoundPredicate<LEFT_CHILD_TYPE extends Expression, RIGHT_CHILD_T
         return visitor.visitCompoundPredicate(this, context);
     }
 
-    public NodeType flip() {
-        if (getType() == NodeType.AND) {
-            return NodeType.OR;
-        }
-        return NodeType.AND;
+    @Override
+    public Expression withChildren(List<Expression> children) {
+        return new CompoundPredicate(getType(), children.get(0), children.get(1));
     }
 
     @Override
@@ -78,8 +75,16 @@ public class CompoundPredicate<LEFT_CHILD_TYPE extends Expression, RIGHT_CHILD_T
     }
 
     @Override
-    public Expression withChildren(List<Expression> children) {
-        return new CompoundPredicate<>(getType(), children.get(0), children.get(1));
+    public String toString() {
+        String nodeType = getType().toString();
+        return nodeType + "(" + left() + ", " + right() + ")";
+    }
+
+    public ExpressionType flip() {
+        if (getType() == ExpressionType.AND) {
+            return ExpressionType.OR;
+        }
+        return ExpressionType.AND;
     }
 }
 

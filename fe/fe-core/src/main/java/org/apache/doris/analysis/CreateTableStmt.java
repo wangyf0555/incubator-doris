@@ -242,7 +242,7 @@ public class CreateTableStmt extends DdlStmt {
     }
 
     public void setTableName(String newTableName) {
-        tableName = new TableName(tableName.getDb(), newTableName);
+        tableName = new TableName(tableName.getCtl(), tableName.getDb(), newTableName);
     }
 
     public String getComment() {
@@ -355,7 +355,7 @@ public class CreateTableStmt extends DdlStmt {
         }
 
         // analyze column def
-        if (!(engineName.equals("iceberg") || engineName.equals("hudi"))
+        if (!(engineName.equals("iceberg") || engineName.equals("hudi") || engineName.equals("elasticsearch"))
                 && (columnDefs == null || columnDefs.isEmpty())) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_TABLE_MUST_HAVE_COLUMNS);
         }

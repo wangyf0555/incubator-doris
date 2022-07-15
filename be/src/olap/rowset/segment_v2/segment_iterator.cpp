@@ -21,12 +21,11 @@
 #include <set>
 #include <utility>
 
+#include "common/status.h"
 #include "gutil/strings/substitute.h"
 #include "olap/column_predicate.h"
 #include "olap/fs/fs_util.h"
-#include "olap/in_list_predicate.h"
 #include "olap/olap_common.h"
-#include "olap/row.h"
 #include "olap/row_block2.h"
 #include "olap/row_cursor.h"
 #include "olap/rowset/segment_v2/column_reader.h"
@@ -34,9 +33,6 @@
 #include "olap/short_key_index.h"
 #include "util/doris_metrics.h"
 #include "util/simd/bits.h"
-#include "vec/columns/column_dictionary.h"
-
-using strings::Substitute;
 
 namespace doris {
 namespace segment_v2 {
@@ -140,13 +136,14 @@ Status SegmentIterator::_init(bool is_vec) {
     SCOPED_RAW_TIMER(&_opts.stats->block_init_ns);
     DorisMetrics::instance()->segment_read_total->increment(1);
     // get file handle from file descriptor of segment
-    fs::BlockManager* block_mgr = fs::fs_util::block_manager(_segment->_path_desc);
-    RETURN_IF_ERROR(block_mgr->open_block(_segment->_path_desc, &_rblock));
+    auto fs = _segment->_fs;
+    RETURN_IF_ERROR(fs->open_file(_segment->_path, &_file_reader));
+
     _row_bitmap.addRange(0, _segment->num_rows());
     RETURN_IF_ERROR(_init_return_column_iterators());
     RETURN_IF_ERROR(_init_bitmap_index_iterators());
     // z-order can not use prefix index
-    if (_segment->_tablet_schema->sort_type() != SortType::ZORDER) {
+    if (_segment->_tablet_schema.sort_type() != SortType::ZORDER) {
         RETURN_IF_ERROR(_get_row_ranges_by_keys());
     }
     RETURN_IF_ERROR(_get_row_ranges_by_column_conditions());
@@ -223,7 +220,7 @@ Status SegmentIterator::_prepare_seek(const StorageReadOptions::KeyRange& key_ra
             RETURN_IF_ERROR(_segment->new_column_iterator(cid, &_column_iterators[cid]));
             ColumnIteratorOptions iter_opts;
             iter_opts.stats = _opts.stats;
-            iter_opts.rblock = _rblock.get();
+            iter_opts.file_reader = _file_reader.get();
             RETURN_IF_ERROR(_column_iterators[cid]->init(iter_opts));
         }
     }
@@ -352,7 +349,7 @@ Status SegmentIterator::_init_return_column_iterators() {
             ColumnIteratorOptions iter_opts;
             iter_opts.stats = _opts.stats;
             iter_opts.use_page_cache = _opts.use_page_cache;
-            iter_opts.rblock = _rblock.get();
+            iter_opts.file_reader = _file_reader.get();
             RETURN_IF_ERROR(_column_iterators[cid]->init(iter_opts));
         }
     }
@@ -664,11 +661,7 @@ void SegmentIterator::_vec_init_lazy_materialization() {
             // Step1: check pred using short eval or vec eval
             if (_can_evaluated_by_vectorized(predicate)) {
                 vec_pred_col_id_set.insert(predicate->column_id());
-                if (_pre_eval_block_predicate == nullptr) {
-                    _pre_eval_block_predicate.reset(new AndBlockColumnPredicate());
-                }
-                _pre_eval_block_predicate->add_column_predicate(
-                        new SingleColumnBlockPredicate(predicate));
+                _pre_eval_block_predicate.push_back(predicate);
             } else {
                 short_cir_pred_col_id_set.insert(cid);
                 _short_cir_eval_predicate.push_back(predicate);
@@ -819,6 +812,8 @@ void SegmentIterator::_init_current_block(
                 current_columns[cid]->set_datetime_type();
             } else if (column_desc->type() == OLAP_FIELD_TYPE_DATEV2) {
                 current_columns[cid]->set_date_v2_type();
+            } else if (column_desc->type() == OLAP_FIELD_TYPE_DECIMAL) {
+                current_columns[cid]->set_decimalv2_type();
             }
             current_columns[cid]->reserve(_opts.block_row_max);
         }
@@ -882,9 +877,16 @@ uint16_t SegmentIterator::_evaluate_vectorization_predicate(uint16_t* sel_rowid_
     }
 
     uint16_t original_size = selected_size;
-    bool ret_flags[selected_size];
-    memset(ret_flags, 1, selected_size);
-    _pre_eval_block_predicate->evaluate_vec(_current_return_columns, selected_size, ret_flags);
+    bool ret_flags[original_size];
+    DCHECK(_pre_eval_block_predicate.size() > 0);
+    auto column_id = _pre_eval_block_predicate[0]->column_id();
+    auto& column = _current_return_columns[column_id];
+    _pre_eval_block_predicate[0]->evaluate_vec(*column, original_size, ret_flags);
+    for (int i = 1; i < _pre_eval_block_predicate.size(); i++) {
+        auto column_id2 = _pre_eval_block_predicate[i]->column_id();
+        auto& column2 = _current_return_columns[column_id2];
+        _pre_eval_block_predicate[i]->evaluate_and_vec(*column2, original_size, ret_flags);
+    }
 
     uint16_t new_size = 0;
 
@@ -932,12 +934,6 @@ uint16_t SegmentIterator::_evaluate_short_circuit_predicate(uint16_t* vec_sel_ro
     for (auto predicate : _short_cir_eval_predicate) {
         auto column_id = predicate->column_id();
         auto& short_cir_column = _current_return_columns[column_id];
-        auto* col_ptr = short_cir_column.get();
-        // range comparison predicate needs to sort the dict and convert the encoding
-        if (predicate->type() == PredicateType::LT || predicate->type() == PredicateType::LE ||
-            predicate->type() == PredicateType::GT || predicate->type() == PredicateType::GE) {
-            col_ptr->convert_dict_codes_if_necessary();
-        }
         selected_size = predicate->evaluate(*short_cir_column, vec_sel_rowid_idx, selected_size);
     }
     _opts.stats->rows_vec_cond_filtered += original_size - selected_size;
@@ -950,10 +946,10 @@ uint16_t SegmentIterator::_evaluate_short_circuit_predicate(uint16_t* vec_sel_ro
     return selected_size;
 }
 
-void SegmentIterator::_read_columns_by_rowids(std::vector<ColumnId>& read_column_ids,
-                                              std::vector<rowid_t>& rowid_vector,
-                                              uint16_t* sel_rowid_idx, size_t select_size,
-                                              vectorized::MutableColumns* mutable_columns) {
+Status SegmentIterator::_read_columns_by_rowids(std::vector<ColumnId>& read_column_ids,
+                                                std::vector<rowid_t>& rowid_vector,
+                                                uint16_t* sel_rowid_idx, size_t select_size,
+                                                vectorized::MutableColumns* mutable_columns) {
     SCOPED_RAW_TIMER(&_opts.stats->lazy_read_ns);
     std::vector<rowid_t> rowids(select_size);
     for (size_t i = 0; i < select_size; ++i) {
@@ -961,8 +957,10 @@ void SegmentIterator::_read_columns_by_rowids(std::vector<ColumnId>& read_column
     }
     for (auto cid : read_column_ids) {
         auto& column = (*mutable_columns)[cid];
-        _column_iterators[cid]->read_by_rowids(rowids.data(), select_size, column);
+        RETURN_IF_ERROR(_column_iterators[cid]->read_by_rowids(rowids.data(), select_size, column));
     }
+
+    return Status::OK();
 }
 
 Status SegmentIterator::next_batch(vectorized::Block* block) {
@@ -1023,6 +1021,7 @@ Status SegmentIterator::next_batch(vectorized::Block* block) {
     if (!_is_need_vec_eval && !_is_need_short_eval) {
         _output_non_pred_columns(block);
     } else {
+        _convert_dict_code_for_predicate_if_necessary();
         uint16_t selected_size = nrows_read;
         uint16_t sel_rowid_idx[selected_size];
 
@@ -1047,8 +1046,9 @@ Status SegmentIterator::next_batch(vectorized::Block* block) {
         }
 
         // step3: read non_predicate column
-        _read_columns_by_rowids(_non_predicate_columns, _block_rowids, sel_rowid_idx, selected_size,
-                                &_current_return_columns);
+        RETURN_IF_ERROR(_read_columns_by_rowids(_non_predicate_columns, _block_rowids,
+                                                sel_rowid_idx, selected_size,
+                                                &_current_return_columns));
 
         // step4: output columns
         // 4.1 output non-predicate column

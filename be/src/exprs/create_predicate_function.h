@@ -32,6 +32,7 @@ public:
     };
 };
 
+template <bool is_vec>
 class HybridSetTraits {
 public:
     using BasePtr = HybridSetBase*;
@@ -39,7 +40,7 @@ public:
     static BasePtr get_function() {
         using CppType = typename PrimitiveTypeTraits<type>::CppType;
         using Set = std::conditional_t<std::is_same_v<CppType, StringValue>, StringValueSet,
-                                       HybridSet<CppType>>;
+                                       HybridSet<type, is_vec>>;
         return new (std::nothrow) Set();
     };
 };
@@ -101,6 +102,12 @@ typename Traits::BasePtr create_predicate_function(PrimitiveType type) {
         return Creator::template create<TYPE_VARCHAR>();
     case TYPE_STRING:
         return Creator::template create<TYPE_STRING>();
+    case TYPE_DECIMAL32:
+        return Creator::template create<TYPE_DECIMAL32>();
+    case TYPE_DECIMAL64:
+        return Creator::template create<TYPE_DECIMAL64>();
+    case TYPE_DECIMAL128:
+        return Creator::template create<TYPE_DECIMAL128>();
 
     default:
         DCHECK(false) << "Invalid type.";
@@ -114,7 +121,12 @@ inline auto create_minmax_filter(PrimitiveType type) {
 }
 
 inline auto create_set(PrimitiveType type) {
-    return create_predicate_function<HybridSetTraits>(type);
+    return create_predicate_function<HybridSetTraits<false>>(type);
+}
+
+// used for VInPredicate
+inline auto vec_create_set(PrimitiveType type) {
+    return create_predicate_function<HybridSetTraits<true>>(type);
 }
 
 inline auto create_bloom_filter(PrimitiveType type) {

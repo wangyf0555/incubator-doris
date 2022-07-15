@@ -34,6 +34,9 @@ public:
 
     virtual ~FileScanner() = default;
 
+    virtual void reg_conjunct_ctxs(const TupleId& tupleId,
+                                   const std::vector<ExprContext*>& conjunct_ctxs);
+
     // Open this scanner, will initialize information need to
     virtual Status open();
 
@@ -46,6 +49,8 @@ public:
     virtual void close() = 0;
 
 protected:
+    virtual void _init_profiles(RuntimeProfile* profile) = 0;
+
     Status finalize_block(vectorized::Block* dest_block, bool* eof);
     Status init_block(vectorized::Block* block);
 
@@ -81,9 +86,15 @@ protected:
 
     bool _scanner_eof = false;
     int _rows = 0;
+    long _read_row_counter = 0;
 
     std::unique_ptr<vectorized::VExprContext*> _vpre_filter_ctx_ptr;
     int _num_of_columns_from_file;
+
+    // File formats based push down predicate
+    std::vector<ExprContext*> _conjunct_ctxs;
+    // slot_ids for parquet predicate push down are in tuple desc
+    TupleId _tupleId;
 
 private:
     Status _init_expr_ctxes();

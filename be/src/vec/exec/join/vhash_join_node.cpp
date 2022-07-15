@@ -18,6 +18,7 @@
 #include "vec/exec/join/vhash_join_node.h"
 
 #include "gen_cpp/PlanNodes_types.h"
+#include "gutil/strings/substitute.h"
 #include "runtime/mem_tracker.h"
 #include "runtime/runtime_filter_mgr.h"
 #include "util/defer_op.h"
@@ -222,10 +223,21 @@ struct ProcessHashTableProbe {
                                                                          _build_block_rows[j]);
                                 }
                             } else {
-                                auto& column = *_build_blocks[_build_block_offsets[j]]
-                                                        .get_by_position(i)
-                                                        .column;
-                                mcol[i + column_offset]->insert_from(column, _build_block_rows[j]);
+                                if (_build_block_offsets[j] == -1) {
+                                    // the only case to reach here:
+                                    // 1. left anti join with other conjuncts, and
+                                    // 2. equal conjuncts does not match
+                                    // since nullptr is emplaced back to visited_map,
+                                    // the output value of the build side does not matter,
+                                    // just insert default value
+                                    mcol[i + column_offset]->insert_default();
+                                } else {
+                                    auto& column = *_build_blocks[_build_block_offsets[j]]
+                                                            .get_by_position(i)
+                                                            .column;
+                                    mcol[i + column_offset]->insert_from(column,
+                                                                         _build_block_rows[j]);
+                                }
                             }
                         }
                     } else {
@@ -675,7 +687,7 @@ HashJoinNode::HashJoinNode(ObjectPool* pool, const TPlanNode& tnode, const Descr
     // avoid vector expand change block address.
     // one block can store 4g data, _build_blocks can store 128*4g data.
     // if probe data bigger than 512g, runtime filter maybe will core dump when insert data.
-    _build_blocks.reserve(128);
+    _build_blocks.reserve(_MAX_BUILD_BLOCK_COUNT);
 }
 
 HashJoinNode::~HashJoinNode() = default;
@@ -824,6 +836,7 @@ Status HashJoinNode::close(RuntimeState* state) {
         return Status::OK();
     }
 
+    START_AND_SCOPE_SPAN(state->get_tracer(), span, "ashJoinNode::close");
     VExpr::close(_build_expr_ctxs, state);
     VExpr::close(_probe_expr_ctxs, state);
     if (_vother_join_conjunct_ptr) {
@@ -840,6 +853,7 @@ Status HashJoinNode::get_next(RuntimeState* state, RowBatch* row_batch, bool* eo
 }
 
 Status HashJoinNode::get_next(RuntimeState* state, Block* output_block, bool* eos) {
+    INIT_AND_SCOPE_GET_NEXT_SPAN(state->get_tracer(), _get_next_span, "HashJoinNode::get_next");
     SCOPED_TIMER(_runtime_profile->total_time_counter());
     SCOPED_TIMER(_probe_timer);
 
@@ -860,7 +874,8 @@ Status HashJoinNode::get_next(RuntimeState* state, Block* output_block, bool* eo
 
         do {
             SCOPED_TIMER(_probe_next_timer);
-            RETURN_IF_ERROR(child(0)->get_next(state, &_probe_block, &_probe_eos));
+            RETURN_IF_ERROR_AND_CHECK_SPAN(child(0)->get_next(state, &_probe_block, &_probe_eos),
+                                           child(0)->get_next_span(), _probe_eos);
         } while (_probe_block.rows() == 0 && !_probe_eos);
 
         probe_rows = _probe_block.rows();
@@ -971,6 +986,7 @@ Status HashJoinNode::get_next(RuntimeState* state, Block* output_block, bool* eo
 }
 
 Status HashJoinNode::open(RuntimeState* state) {
+    START_AND_SCOPE_SPAN(state->get_tracer(), span, "HashJoinNode::open");
     SCOPED_TIMER(_runtime_profile->total_time_counter());
     SCOPED_SWITCH_TASK_THREAD_LOCAL_MEM_TRACKER(mem_tracker());
     RETURN_IF_ERROR(ExecNode::open(state));
@@ -983,8 +999,11 @@ Status HashJoinNode::open(RuntimeState* state) {
     }
 
     std::promise<Status> thread_status;
-    std::thread(bind(&HashJoinNode::_hash_table_build_thread, this, state, &thread_status))
-            .detach();
+    std::thread([this, state, thread_status_p = &thread_status,
+                 parent_span = opentelemetry::trace::Tracer::GetCurrentSpan()] {
+        OpentelemetryScope scope {parent_span};
+        this->_hash_table_build_thread(state, thread_status_p);
+    }).detach();
 
     // Open the probe-side child so that it may perform any initialisation in parallel.
     // Don't exit even if we see an error, we still need to wait for the build thread
@@ -998,6 +1017,7 @@ Status HashJoinNode::open(RuntimeState* state) {
 }
 
 void HashJoinNode::_hash_table_build_thread(RuntimeState* state, std::promise<Status>* status) {
+    START_AND_SCOPE_SPAN(state->get_tracer(), span, "HashJoinNode::_hash_table_build_thread");
     SCOPED_ATTACH_TASK_THREAD(state, mem_tracker());
     status->set_value(_hash_table_build(state));
 }
@@ -1012,12 +1032,16 @@ Status HashJoinNode::_hash_table_build(RuntimeState* state) {
     int64_t last_mem_used = 0;
     bool eos = false;
 
+    // make one block for each 4 gigabytes
+    constexpr static auto BUILD_BLOCK_MAX_SIZE = 4 * 1024UL * 1024UL * 1024UL;
+
     Block block;
     while (!eos) {
         block.clear_column_data();
         RETURN_IF_CANCELLED(state);
 
-        RETURN_IF_ERROR(child(1)->get_next(state, &block, &eos));
+        RETURN_IF_ERROR_AND_CHECK_SPAN(child(1)->get_next(state, &block, &eos),
+                                       child(1)->get_next_span(), eos);
         _hash_table_mem_tracker->consume(block.allocated_bytes());
         _mem_used += block.allocated_bytes();
 
@@ -1025,9 +1049,12 @@ Status HashJoinNode::_hash_table_build(RuntimeState* state) {
             mutable_block.merge(block);
         }
 
-        // make one block for each 4 gigabytes
-        constexpr static auto BUILD_BLOCK_MAX_SIZE = 4 * 1024UL * 1024UL * 1024UL;
         if (UNLIKELY(_mem_used - last_mem_used > BUILD_BLOCK_MAX_SIZE)) {
+            if (_build_blocks.size() == _MAX_BUILD_BLOCK_COUNT) {
+                return Status::NotSupported(
+                        strings::Substitute("data size of right table in hash join > $0",
+                                            BUILD_BLOCK_MAX_SIZE * _MAX_BUILD_BLOCK_COUNT));
+            }
             _build_blocks.emplace_back(mutable_block.to_block());
             // TODO:: Rethink may we should do the proess after we recevie all build blocks ?
             // which is better.
@@ -1039,8 +1066,15 @@ Status HashJoinNode::_hash_table_build(RuntimeState* state) {
         }
     }
 
-    _build_blocks.emplace_back(mutable_block.to_block());
-    RETURN_IF_ERROR(_process_build_block(state, _build_blocks[index], index));
+    if (!mutable_block.empty()) {
+        if (_build_blocks.size() == _MAX_BUILD_BLOCK_COUNT) {
+            return Status::NotSupported(
+                    strings::Substitute("data size of right table in hash join > $0",
+                                        BUILD_BLOCK_MAX_SIZE * _MAX_BUILD_BLOCK_COUNT));
+        }
+        _build_blocks.emplace_back(mutable_block.to_block());
+        RETURN_IF_ERROR(_process_build_block(state, _build_blocks[index], index));
+    }
 
     return std::visit(
             [&](auto&& arg) -> Status {
@@ -1215,8 +1249,25 @@ void HashJoinNode::_hash_table_init() {
             break;
         case TYPE_LARGEINT:
         case TYPE_DECIMALV2:
-            _hash_table_variants.emplace<I128HashTableContext>();
+        case TYPE_DECIMAL32:
+        case TYPE_DECIMAL64:
+        case TYPE_DECIMAL128: {
+            DataTypePtr& type_ptr = _build_expr_ctxs[0]->root()->data_type();
+            TypeIndex idx = _build_expr_ctxs[0]->root()->is_nullable()
+                                    ? assert_cast<const DataTypeNullable&>(*type_ptr)
+                                              .get_nested_type()
+                                              ->get_type_id()
+                                    : type_ptr->get_type_id();
+            WhichDataType which(idx);
+            if (which.is_decimal32()) {
+                _hash_table_variants.emplace<I32HashTableContext>();
+            } else if (which.is_decimal64()) {
+                _hash_table_variants.emplace<I64HashTableContext>();
+            } else {
+                _hash_table_variants.emplace<I128HashTableContext>();
+            }
             break;
+        }
         default:
             _hash_table_variants.emplace<SerializedHashTableContext>();
         }

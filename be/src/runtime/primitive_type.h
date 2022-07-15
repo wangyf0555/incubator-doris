@@ -65,6 +65,9 @@ enum PrimitiveType {
     TYPE_DATEV2,         /* 25 */
     TYPE_DATETIMEV2,     /* 26 */
     TYPE_TIMEV2,         /* 27 */
+    TYPE_DECIMAL32,      /* 28 */
+    TYPE_DECIMAL64,      /* 29 */
+    TYPE_DECIMAL128,     /* 30 */
 };
 
 PrimitiveType convert_type_to_primitive(FunctionContext::Type type);
@@ -154,6 +157,21 @@ struct PrimitiveTypeTraits<TYPE_DECIMALV2> {
     using ColumnType = vectorized::ColumnDecimal<vectorized::Decimal128>;
 };
 template <>
+struct PrimitiveTypeTraits<TYPE_DECIMAL32> {
+    using CppType = int32_t;
+    using ColumnType = vectorized::ColumnDecimal<vectorized::Decimal32>;
+};
+template <>
+struct PrimitiveTypeTraits<TYPE_DECIMAL64> {
+    using CppType = int64_t;
+    using ColumnType = vectorized::ColumnDecimal<vectorized::Decimal64>;
+};
+template <>
+struct PrimitiveTypeTraits<TYPE_DECIMAL128> {
+    using CppType = __int128_t;
+    using ColumnType = vectorized::ColumnDecimal<vectorized::Decimal128>;
+};
+template <>
 struct PrimitiveTypeTraits<TYPE_LARGEINT> {
     using CppType = __int128_t;
     using ColumnType = vectorized::ColumnInt128;
@@ -171,6 +189,12 @@ struct PrimitiveTypeTraits<TYPE_VARCHAR> {
 
 template <>
 struct PrimitiveTypeTraits<TYPE_STRING> {
+    using CppType = StringValue;
+    using ColumnType = vectorized::ColumnString;
+};
+
+template <>
+struct PrimitiveTypeTraits<TYPE_HLL> {
     using CppType = StringValue;
     using ColumnType = vectorized::ColumnString;
 };
@@ -204,6 +228,22 @@ struct PredicatePrimitiveTypeTraits<TYPE_DATEV2> {
 template <>
 struct PredicatePrimitiveTypeTraits<TYPE_DATETIMEV2> {
     using PredicateFieldType = uint64_t;
+};
+
+// used for VInPredicate. VInPredicate should use vectorized data type
+template <PrimitiveType type>
+struct VecPrimitiveTypeTraits {
+    using CppType = typename PrimitiveTypeTraits<type>::CppType;
+};
+
+template <>
+struct VecPrimitiveTypeTraits<TYPE_DATE> {
+    using CppType = vectorized::VecDateTimeValue;
+};
+
+template <>
+struct VecPrimitiveTypeTraits<TYPE_DATETIME> {
+    using CppType = vectorized::VecDateTimeValue;
 };
 
 } // namespace doris

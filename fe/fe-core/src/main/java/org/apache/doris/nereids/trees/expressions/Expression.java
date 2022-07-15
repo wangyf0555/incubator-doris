@@ -19,7 +19,7 @@ package org.apache.doris.nereids.trees.expressions;
 
 import org.apache.doris.nereids.exceptions.UnboundException;
 import org.apache.doris.nereids.trees.AbstractTreeNode;
-import org.apache.doris.nereids.trees.NodeType;
+import org.apache.doris.nereids.trees.expressions.visitor.ExpressionVisitor;
 import org.apache.doris.nereids.types.DataType;
 
 import org.slf4j.Logger;
@@ -33,17 +33,23 @@ import java.util.Objects;
  */
 public abstract class Expression extends AbstractTreeNode<Expression> {
 
+    protected final ExpressionType type;
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
 
-    public Expression(NodeType type, Expression... children) {
-        super(type, children);
+    public Expression(ExpressionType type, Expression... children) {
+        super(children);
+        this.type = Objects.requireNonNull(type, "type can not be null");
+    }
+
+    public ExpressionType getType() {
+        return type;
     }
 
     public DataType getDataType() throws UnboundException {
         throw new UnboundException("dataType");
     }
 
-    public String sql() throws UnboundException {
+    public String toSql() throws UnboundException {
         throw new UnboundException("sql");
     }
 
@@ -74,12 +80,7 @@ public abstract class Expression extends AbstractTreeNode<Expression> {
      * Whether the expression is a constant.
      */
     public boolean isConstant() {
-        for (Expression child : children()) {
-            if (child.isConstant()) {
-                return true;
-            }
-        }
-        return false;
+        return children().stream().anyMatch(Expression::isConstant);
     }
 
     @Override
@@ -92,5 +93,10 @@ public abstract class Expression extends AbstractTreeNode<Expression> {
         }
         Expression that = (Expression) o;
         return Objects.equals(children(), that.children());
+    }
+
+    @Override
+    public int hashCode() {
+        return 0;
     }
 }

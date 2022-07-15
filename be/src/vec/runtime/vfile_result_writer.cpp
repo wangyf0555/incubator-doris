@@ -120,8 +120,7 @@ Status VFileResultWriter::_create_file_writer(const std::string& file_name) {
         return Status::NotSupported("Parquet Writer is not supported yet!");
         break;
     default:
-        return Status::InternalError(
-                strings::Substitute("unsupported file format: $0", _file_opts->file_format));
+        return Status::InternalError("unsupported file format: {}", _file_opts->file_format);
     }
     LOG(INFO) << "create file for exporting query result. file name: " << file_name
               << ". query id: " << print_id(_state->query_id())
@@ -290,6 +289,18 @@ Status VFileResultWriter::_write_csv_file(const Block& block) {
                     std::string decimal_str;
                     decimal_str = decimal_val.to_string();
                     _plain_text_outstream << decimal_str;
+                    break;
+                }
+                case TYPE_DECIMAL32: {
+                    _plain_text_outstream << col.type->to_string(*col.column, i);
+                    break;
+                }
+                case TYPE_DECIMAL64: {
+                    _plain_text_outstream << col.type->to_string(*col.column, i);
+                    break;
+                }
+                case TYPE_DECIMAL128: {
+                    _plain_text_outstream << col.type->to_string(*col.column, i);
                     break;
                 }
                 default: {
@@ -466,9 +477,9 @@ Status VFileResultWriter::_fill_result_block() {
             break;
         }
         default:
-            return Status::InternalError(strings::Substitute(
-                    "Invalid type to print: $0",
-                    _output_row_descriptor.tuple_descriptors()[0]->slots()[i]->type().type));
+            return Status::InternalError(
+                    "Invalid type to print: {}",
+                    _output_row_descriptor.tuple_descriptors()[0]->slots()[i]->type().type);
         }
     }
     return Status::OK();
