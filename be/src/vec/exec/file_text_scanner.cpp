@@ -28,6 +28,7 @@
 #include "exec/text_converter.hpp"
 #include "exprs/expr_context.h"
 #include "io/buffered_reader.h"
+#include "io/file_factory.h"
 #include "io/hdfs_reader_writer.h"
 #include "util/types.h"
 #include "util/utf8_check.h"
@@ -90,6 +91,7 @@ Status FileTextScanner::get_next(Block* block, bool* eof) {
 
     const int batch_size = _state->batch_size();
 
+    int current_rows = _rows;
     while (_rows < batch_size && !_scanner_eof) {
         if (_cur_line_reader == nullptr || _cur_line_reader_eof) {
             RETURN_IF_ERROR(_open_next_reader());
@@ -101,8 +103,6 @@ Status FileTextScanner::get_next(Block* block, bool* eof) {
         const uint8_t* ptr = nullptr;
         size_t size = 0;
         RETURN_IF_ERROR(_cur_line_reader->read_line(&ptr, &size, &_cur_line_reader_eof));
-        std::unique_ptr<const uint8_t> u_ptr;
-        u_ptr.reset(ptr);
         if (_skip_lines > 0) {
             _skip_lines--;
             continue;
@@ -114,6 +114,10 @@ Status FileTextScanner::get_next(Block* block, bool* eof) {
         {
             COUNTER_UPDATE(_rows_read_counter, 1);
             RETURN_IF_ERROR(_fill_file_columns(Slice(ptr, size), block));
+        }
+        if (_cur_line_reader_eof) {
+            RETURN_IF_ERROR(_fill_columns_from_path(block, _rows - current_rows));
+            current_rows = _rows;
         }
     }
 
@@ -154,11 +158,8 @@ Status FileTextScanner::_open_next_reader() {
 
 Status FileTextScanner::_open_file_reader() {
     const TFileRangeDesc& range = _ranges[_next_range];
-
-    FileReader* hdfs_reader = nullptr;
-    RETURN_IF_ERROR(HdfsReaderWriter::create_reader(range.hdfs_params, range.path,
-                                                    range.start_offset, &hdfs_reader));
-    _cur_file_reader.reset(new BufferedReader(_profile, hdfs_reader));
+    RETURN_IF_ERROR(FileFactory::create_file_reader(_state->exec_env(), _profile, _params, range,
+                                                    _cur_file_reader));
     return _cur_file_reader->open();
 }
 
@@ -171,7 +172,7 @@ Status FileTextScanner::_open_line_reader() {
     const TFileRangeDesc& range = _ranges[_next_range];
     int64_t size = range.size;
     if (range.start_offset != 0) {
-        if (range.format_type != TFileFormatType::FORMAT_CSV_PLAIN) {
+        if (_params.format_type != TFileFormatType::FORMAT_CSV_PLAIN) {
             std::stringstream ss;
             ss << "For now we do not support split compressed file";
             return Status::InternalError(ss.str());
@@ -182,14 +183,14 @@ Status FileTextScanner::_open_line_reader() {
     }
 
     // open line reader
-    switch (range.format_type) {
+    switch (_params.format_type) {
     case TFileFormatType::FORMAT_CSV_PLAIN:
         _cur_line_reader = new PlainTextLineReader(_profile, _cur_file_reader.get(), nullptr, size,
                                                    _line_delimiter, _line_delimiter_length);
         break;
     default: {
         std::stringstream ss;
-        ss << "Unknown format type, cannot init line reader, type=" << range.format_type;
+        ss << "Unknown format type, cannot init line reader, type=" << _params.format_type;
         return Status::InternalError(ss.str());
     }
     }

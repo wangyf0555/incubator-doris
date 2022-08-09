@@ -19,7 +19,6 @@ package org.apache.doris.nereids.rules.implementation;
 
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.rules.RuleType;
-import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHeapSort;
 
 /**
@@ -27,11 +26,9 @@ import org.apache.doris.nereids.trees.plans.physical.PhysicalHeapSort;
  */
 public class LogicalSortToPhysicalHeapSort extends OneImplementationRuleFactory {
     @Override
-    public Rule<Plan> build() {
-        return logicalSort().then(sort -> new PhysicalHeapSort(
+    public Rule build() {
+        return logicalSort().then(sort -> new PhysicalHeapSort<>(
                 sort.getOrderKeys(),
-                sort.getLimit(),
-                sort.getOffset(),
                 sort.getLogicalProperties(),
                 sort.child())
             ).toRule(RuleType.LOGICAL_SORT_TO_PHYSICAL_HEAP_SORT_RULE);

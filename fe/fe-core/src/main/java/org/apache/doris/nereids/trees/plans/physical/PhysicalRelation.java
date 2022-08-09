@@ -21,6 +21,7 @@ import org.apache.doris.nereids.memo.GroupExpression;
 import org.apache.doris.nereids.properties.LogicalProperties;
 import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.plans.PlanType;
+import org.apache.doris.nereids.trees.plans.algebra.Scan;
 import org.apache.doris.nereids.trees.plans.visitor.PlanVisitor;
 
 import com.google.common.collect.ImmutableList;
@@ -32,7 +33,7 @@ import java.util.Optional;
 /**
  * Abstract class for all physical scan plan.
  */
-public abstract class PhysicalRelation extends PhysicalLeaf {
+public abstract class PhysicalRelation extends PhysicalLeaf implements Scan {
 
     protected final List<String> qualifier;
 
@@ -50,6 +51,23 @@ public abstract class PhysicalRelation extends PhysicalLeaf {
 
     public List<String> getQualifier() {
         return qualifier;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        PhysicalRelation that = (PhysicalRelation) o;
+        return Objects.equals(qualifier, that.qualifier);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(qualifier);
     }
 
     @Override

@@ -34,6 +34,8 @@ namespace doris {
 // The primary key index is designed in a similar way like RocksDB
 // Partitioned Index, which is created in the segment file when MemTable flushes.
 // Index is stored in multiple pages to leverage the IndexedColumnWriter.
+//
+// NOTE: for now, it's only used when unique key merge-on-write property enabled.
 class PrimaryKeyIndexBuilder {
 public:
     PrimaryKeyIndexBuilder(io::FileWriter* file_writer)
@@ -67,8 +69,7 @@ class PrimaryKeyIndexReader {
 public:
     PrimaryKeyIndexReader() : _parsed(false) {}
 
-    Status parse(io::FileSystem* fs, const std::string& path,
-                 const segment_v2::PrimaryKeyIndexMetaPB& meta);
+    Status parse(io::FileReaderSPtr file_reader, const segment_v2::PrimaryKeyIndexMetaPB& meta);
 
     Status new_iterator(std::unique_ptr<segment_v2::IndexedColumnIterator>* index_iterator) const {
         DCHECK(_parsed);
@@ -92,10 +93,13 @@ public:
         return _index_reader->num_values();
     }
 
+    uint64_t get_memory_size() {
+        DCHECK(_parsed);
+        return _index_reader->get_memory_size() + _bf->size();
+    }
+
 private:
     bool _parsed;
-    bool _use_page_cache = true;
-    bool _kept_in_memory = true;
     std::unique_ptr<segment_v2::IndexedColumnReader> _index_reader;
     std::unique_ptr<segment_v2::BloomFilter> _bf;
 };

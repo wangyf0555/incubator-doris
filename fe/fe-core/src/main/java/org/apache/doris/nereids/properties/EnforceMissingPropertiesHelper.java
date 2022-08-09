@@ -47,13 +47,17 @@ public class EnforceMissingPropertiesHelper {
      */
     public Pair<PhysicalProperties, Double> enforceProperty(PhysicalProperties output, PhysicalProperties required) {
         boolean isMeetOrder = output.getOrderSpec().meet(required.getOrderSpec());
-        boolean isMeetDistribution = output.getDistributionSpec().meet(required.getDistributionSpec());
+        boolean isMeetDistribution = output.getDistributionSpec().satisfy(required.getDistributionSpec());
 
         if (!isMeetDistribution && !isMeetOrder) {
+            // Both Distribution and Order don't satisfy.
             return new Pair<>(enforceSortAndDistribution(output, required), curTotalCost);
         } else if (isMeetDistribution && isMeetOrder) {
+            // Both satisfy.
+            // TODO: can't reach here.
             return new Pair<>(null, curTotalCost);
         } else if (!isMeetDistribution) {
+            // Distribution don't satisfy.
             if (required.getOrderSpec().getOrderKeys().isEmpty()) {
                 return new Pair<>(enforceDistribution(output), curTotalCost);
             } else {
@@ -67,17 +71,18 @@ public class EnforceMissingPropertiesHelper {
                 return new Pair<>(enforceDistribution(output), curTotalCost);
             }
         } else {
+            // Order don't satisfy.
             return new Pair<>(enforceSort(output), curTotalCost);
         }
     }
 
     private PhysicalProperties enforceSort(PhysicalProperties oldOutputProperty) {
         // clone
-        PhysicalProperties newOutputProperty = new PhysicalProperties(oldOutputProperty.getDistributionSpec(),
-                oldOutputProperty.getOrderSpec());
-        newOutputProperty.setOrderSpec(context.getRequiredProperties().getOrderSpec());
+        PhysicalProperties newOutputProperty = new PhysicalProperties(
+                oldOutputProperty.getDistributionSpec(),
+                context.getRequiredProperties().getOrderSpec());
         GroupExpression enforcer =
-                context.getRequiredProperties().getOrderSpec().addEnforcer(groupExpression.getParent());
+                context.getRequiredProperties().getOrderSpec().addEnforcer(groupExpression.getOwnerGroup());
 
         updateCostWithEnforcer(enforcer, oldOutputProperty, newOutputProperty);
 
@@ -85,11 +90,11 @@ public class EnforceMissingPropertiesHelper {
     }
 
     private PhysicalProperties enforceDistribution(PhysicalProperties oldOutputProperty) {
-        PhysicalProperties newOutputProperty = new PhysicalProperties(oldOutputProperty.getDistributionSpec(),
+        PhysicalProperties newOutputProperty = new PhysicalProperties(
+                context.getRequiredProperties().getDistributionSpec(),
                 oldOutputProperty.getOrderSpec());
-        newOutputProperty.setDistributionSpec(context.getRequiredProperties().getDistributionSpec());
         GroupExpression enforcer =
-                context.getRequiredProperties().getDistributionSpec().addEnforcer(groupExpression.getParent());
+                context.getRequiredProperties().getDistributionSpec().addEnforcer(groupExpression.getOwnerGroup());
 
         updateCostWithEnforcer(enforcer, oldOutputProperty, newOutputProperty);
 
@@ -99,20 +104,20 @@ public class EnforceMissingPropertiesHelper {
     private void updateCostWithEnforcer(GroupExpression enforcer,
             PhysicalProperties oldOutputProperty,
             PhysicalProperties newOutputProperty) {
-        context.getPlannerContext().getMemo().addEnforcerPlan(enforcer, groupExpression.getParent());
+        context.getPlannerContext().getMemo().addEnforcerPlan(enforcer, groupExpression.getOwnerGroup());
         curTotalCost += CostCalculator.calculateCost(enforcer);
 
         if (enforcer.updateLowestCostTable(newOutputProperty, Lists.newArrayList(oldOutputProperty), curTotalCost)) {
             enforcer.putOutputPropertiesMap(newOutputProperty, newOutputProperty);
         }
-        groupExpression.getParent().setBestPlan(enforcer, curTotalCost, newOutputProperty);
+        groupExpression.getOwnerGroup().setBestPlan(enforcer, curTotalCost, newOutputProperty);
     }
 
     private PhysicalProperties enforceSortAndDistribution(PhysicalProperties outputProperty,
             PhysicalProperties requiredProperty) {
         PhysicalProperties enforcedProperty;
         if (requiredProperty.getDistributionSpec()
-                .equals(new GatherDistributionSpec())) {
+                .equals(new DistributionSpecGather())) {
             enforcedProperty = enforceSort(outputProperty);
             enforcedProperty = enforceDistribution(enforcedProperty);
         } else {

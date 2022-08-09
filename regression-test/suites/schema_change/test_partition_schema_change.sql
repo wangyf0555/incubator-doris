@@ -22,7 +22,7 @@ PARTITION BY RANGE(`date`)
 DISTRIBUTED BY HASH(`user_id`) BUCKETS 1
 PROPERTIES
 (
-    "replication_num" = "1"
+    "replication_num" = "1", "light_schema_change" = "true"
 );
 
 INSERT INTO example_range_tbl VALUES

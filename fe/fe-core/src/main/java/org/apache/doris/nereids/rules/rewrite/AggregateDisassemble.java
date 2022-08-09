@@ -6,7 +6,7 @@
 // "License"); you may not use this file except in compliance
 // with the License.  You may obtain a copy of the License at
 //
-//  http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -24,10 +24,9 @@ import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.functions.AggregateFunction;
-import org.apache.doris.nereids.trees.expressions.visitor.DefaultExpressionRewriter;
+import org.apache.doris.nereids.trees.expressions.visitor.ExpressionReplacer;
 import org.apache.doris.nereids.trees.plans.AggPhase;
 import org.apache.doris.nereids.trees.plans.GroupPlan;
-import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalAggregate;
 
 import com.google.common.collect.Lists;
@@ -57,11 +56,11 @@ import java.util.stream.Collectors;
 public class AggregateDisassemble extends OneRewriteRuleFactory {
 
     @Override
-    public Rule<Plan> build() {
+    public Rule build() {
         return logicalAggregate().when(agg -> !agg.isDisassembled()).thenApply(ctx -> {
             LogicalAggregate<GroupPlan> aggregate = ctx.root;
-            List<NamedExpression> originOutputExprs = aggregate.getOutputExpressionList();
-            List<Expression> originGroupByExprs = aggregate.getGroupByExpressionList();
+            List<NamedExpression> originOutputExprs = aggregate.getOutputExpressions();
+            List<Expression> originGroupByExprs = aggregate.getGroupByExpressions();
 
             // 1. generate a map from local aggregate output to global aggregate expr substitution.
             //    inputSubstitutionMap use for replacing expression in global aggregate
@@ -81,7 +80,7 @@ public class AggregateDisassemble extends OneRewriteRuleFactory {
             //    NOTICE: Ref: SlotReference, A: Alias, AF: AggregateFunction, #x: ExprId x
             // 2. collect local aggregate output expressions and local aggregate group by expression list
             Map<Expression, Expression> inputSubstitutionMap = Maps.newHashMap();
-            List<Expression> localGroupByExprs = aggregate.getGroupByExpressionList();
+            List<Expression> localGroupByExprs = aggregate.getGroupByExpressions();
             List<NamedExpression> localOutputExprs = Lists.newArrayList();
             for (Expression originGroupByExpr : originGroupByExprs) {
                 if (inputSubstitutionMap.containsKey(originGroupByExpr)) {
@@ -112,7 +111,7 @@ public class AggregateDisassemble extends OneRewriteRuleFactory {
             }
 
             // 3. replace expression in globalOutputExprs and globalGroupByExprs
-            List<NamedExpression> globalOutputExprs = aggregate.getOutputExpressionList().stream()
+            List<NamedExpression> globalOutputExprs = aggregate.getOutputExpressions().stream()
                     .map(e -> ExpressionReplacer.INSTANCE.visit(e, inputSubstitutionMap))
                     .map(NamedExpression.class::cast)
                     .collect(Collectors.toList());
@@ -120,14 +119,14 @@ public class AggregateDisassemble extends OneRewriteRuleFactory {
                     .map(e -> ExpressionReplacer.INSTANCE.visit(e, inputSubstitutionMap)).collect(Collectors.toList());
 
             // 4. generate new plan
-            LogicalAggregate localAggregate = new LogicalAggregate(
+            LogicalAggregate localAggregate = new LogicalAggregate<>(
                     localGroupByExprs,
                     localOutputExprs,
                     true,
                     AggPhase.LOCAL,
                     aggregate.child()
             );
-            return new LogicalAggregate(
+            return new LogicalAggregate<>(
                     globalGroupByExprs,
                     globalOutputExprs,
                     true,
@@ -135,24 +134,5 @@ public class AggregateDisassemble extends OneRewriteRuleFactory {
                     localAggregate
             );
         }).toRule(RuleType.AGGREGATE_DISASSEMBLE);
-    }
-
-    @SuppressWarnings("InnerClassMayBeStatic")
-    private static class ExpressionReplacer
-            extends DefaultExpressionRewriter<Map<Expression, Expression>> {
-        private static final ExpressionReplacer INSTANCE = new ExpressionReplacer();
-
-        @Override
-        public Expression visit(Expression expr, Map<Expression, Expression> substitutionMap) {
-            // TODO: we need to do sub tree match and replace. but we do not have semanticEquals now.
-            //    e.g. a + 1 + 2 in output expression should be replaced by
-            //    (slot reference to update phase out (a + 1)) + 2, if we do group by a + 1
-            //   currently, we could only handle output expression same with group by expression
-            if (substitutionMap.containsKey(expr)) {
-                return substitutionMap.get(expr);
-            } else {
-                return super.visit(expr, substitutionMap);
-            }
-        }
     }
 }

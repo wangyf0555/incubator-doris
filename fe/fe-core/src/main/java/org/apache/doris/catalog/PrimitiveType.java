@@ -87,10 +87,12 @@ public enum PrimitiveType {
         builder.add(DECIMAL32);
         builder.add(DECIMAL64);
         builder.add(DECIMAL128);
+        builder.add(DATETIMEV2);
         typeWithPrecision = builder.build();
     }
 
     private static ImmutableSetMultimap<PrimitiveType, PrimitiveType> implicitCastMap;
+
     static {
         ImmutableSetMultimap.Builder<PrimitiveType, PrimitiveType> builder = ImmutableSetMultimap.builder();
         // Nulltype
@@ -1106,7 +1108,7 @@ public enum PrimitiveType {
             case DATETIMEV2: {
                 if (isTimeType) {
                     return MysqlColType.MYSQL_TYPE_TIME;
-                }  else {
+                } else {
                     return MysqlColType.MYSQL_TYPE_DATETIME;
                 }
             }
@@ -1154,9 +1156,9 @@ public enum PrimitiveType {
     public static PrimitiveType getDatePrimitiveType(PrimitiveType type) {
         switch (type) {
             case DATE:
-                return Config.use_date_v2_by_default ? DATEV2 : DATE;
+                return Config.enable_date_conversion ? DATEV2 : DATE;
             case DATETIME:
-                return Config.use_date_v2_by_default ? DATETIMEV2 : DATETIME;
+                return Config.enable_date_conversion ? DATETIMEV2 : DATETIME;
             default:
                 return type;
         }

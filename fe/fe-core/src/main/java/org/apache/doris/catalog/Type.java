@@ -17,7 +17,6 @@
 
 package org.apache.doris.catalog;
 
-import org.apache.doris.analysis.DateLiteral;
 import org.apache.doris.analysis.Expr;
 import org.apache.doris.analysis.StringLiteral;
 import org.apache.doris.common.DdlException;
@@ -108,6 +107,8 @@ public abstract class Type {
     private static final ArrayList<ScalarType> integerTypes;
     private static final ArrayList<ScalarType> numericTypes;
     private static final ArrayList<ScalarType> supportedTypes;
+    private static final ArrayList<Type> arraySubTypes;
+    private static final ArrayList<ScalarType> trivialTypes;
 
     static {
         integerTypes = Lists.newArrayList();
@@ -118,11 +119,7 @@ public abstract class Type {
         integerTypes.add(LARGEINT);
 
         numericTypes = Lists.newArrayList();
-        numericTypes.add(TINYINT);
-        numericTypes.add(SMALLINT);
-        numericTypes.add(INT);
-        numericTypes.add(BIGINT);
-        numericTypes.add(LARGEINT);
+        numericTypes.addAll(integerTypes);
         numericTypes.add(FLOAT);
         numericTypes.add(DOUBLE);
         numericTypes.add(DECIMALV2);
@@ -130,32 +127,37 @@ public abstract class Type {
         numericTypes.add(DECIMAL64);
         numericTypes.add(DECIMAL128);
 
+        trivialTypes = Lists.newArrayList();
+        trivialTypes.addAll(numericTypes);
+        trivialTypes.add(BOOLEAN);
+        trivialTypes.add(VARCHAR);
+        trivialTypes.add(STRING);
+        trivialTypes.add(CHAR);
+        trivialTypes.add(DATE);
+        trivialTypes.add(DATETIME);
+        trivialTypes.add(DATEV2);
+        trivialTypes.add(DATETIMEV2);
+        trivialTypes.add(TIME);
+        trivialTypes.add(TIMEV2);
+
         supportedTypes = Lists.newArrayList();
+        supportedTypes.addAll(trivialTypes);
         supportedTypes.add(NULL);
-        supportedTypes.add(BOOLEAN);
-        supportedTypes.add(TINYINT);
-        supportedTypes.add(SMALLINT);
-        supportedTypes.add(INT);
-        supportedTypes.add(BIGINT);
-        supportedTypes.add(LARGEINT);
-        supportedTypes.add(FLOAT);
-        supportedTypes.add(DOUBLE);
-        supportedTypes.add(VARCHAR);
         supportedTypes.add(HLL);
         supportedTypes.add(BITMAP);
         supportedTypes.add(QUANTILE_STATE);
-        supportedTypes.add(CHAR);
-        supportedTypes.add(DATE);
-        supportedTypes.add(DATETIME);
-        supportedTypes.add(DATEV2);
-        supportedTypes.add(DATETIMEV2);
-        supportedTypes.add(DECIMALV2);
-        supportedTypes.add(DECIMAL32);
-        supportedTypes.add(DECIMAL64);
-        supportedTypes.add(DECIMAL128);
-        supportedTypes.add(TIME);
-        supportedTypes.add(TIMEV2);
-        supportedTypes.add(STRING);
+
+        arraySubTypes = Lists.newArrayList();
+        arraySubTypes.add(BOOLEAN);
+        arraySubTypes.addAll(integerTypes);
+        arraySubTypes.add(FLOAT);
+        arraySubTypes.add(DOUBLE);
+        arraySubTypes.add(DECIMALV2);
+        arraySubTypes.add(DATE);
+        arraySubTypes.add(DATETIME);
+        arraySubTypes.add(CHAR);
+        arraySubTypes.add(VARCHAR);
+        arraySubTypes.add(STRING);
     }
 
     public static ArrayList<ScalarType> getIntegerTypes() {
@@ -166,8 +168,16 @@ public abstract class Type {
         return numericTypes;
     }
 
+    public static ArrayList<ScalarType> getTrivialTypes() {
+        return trivialTypes;
+    }
+
     public static ArrayList<ScalarType> getSupportedTypes() {
         return supportedTypes;
+    }
+
+    public static ArrayList<Type> getArraySubTypes() {
+        return arraySubTypes;
     }
 
     /**
@@ -486,6 +496,20 @@ public abstract class Type {
         if (t1.isScalarType() && t2.isScalarType()) {
             return ScalarType.getAssignmentCompatibleType((ScalarType) t1, (ScalarType) t2, strict);
         }
+
+        if (t1.isArrayType() && t2.isArrayType()) {
+            ArrayType arrayType1 = (ArrayType) t1;
+            ArrayType arrayType2 = (ArrayType) t2;
+            Type itemCompatibleType = Type.getAssignmentCompatibleType(arrayType1.getItemType(),
+                    arrayType2.getItemType(), strict);
+
+            if (itemCompatibleType.isInvalid()) {
+                return itemCompatibleType;
+            }
+
+            return new ArrayType(itemCompatibleType, arrayType1.getContainsNull() || arrayType2.getContainsNull());
+        }
+
         return ScalarType.INVALID;
     }
 
@@ -1350,6 +1374,8 @@ public abstract class Type {
         compatibilityMatrix[TIME.ordinal()][DECIMAL32.ordinal()] = PrimitiveType.INVALID_TYPE;
         compatibilityMatrix[TIME.ordinal()][DECIMAL64.ordinal()] = PrimitiveType.INVALID_TYPE;
         compatibilityMatrix[TIME.ordinal()][DECIMAL128.ordinal()] = PrimitiveType.INVALID_TYPE;
+        compatibilityMatrix[TIME.ordinal()][DATEV2.ordinal()] = PrimitiveType.INVALID_TYPE;
+        compatibilityMatrix[TIME.ordinal()][DATETIMEV2.ordinal()] = PrimitiveType.INVALID_TYPE;
 
         compatibilityMatrix[TIMEV2.ordinal()][TIMEV2.ordinal()] = PrimitiveType.INVALID_TYPE;
         compatibilityMatrix[TIMEV2.ordinal()][TIME.ordinal()] = PrimitiveType.INVALID_TYPE;
@@ -1504,13 +1530,13 @@ public abstract class Type {
 
     private static Type getDateComparisonResultType(ScalarType t1, ScalarType t2) {
         if (t1.isDate() && t2.isDate()) {
-            return DateLiteral.getDefaultDateType(Type.DATE);
+            return ScalarType.getDefaultDateType(Type.DATE);
         } else if ((t1.isDateV2() && t2.isDate()) || t1.isDate() && t2.isDateV2()) {
             return Type.DATEV2;
         } else if (t1.isDateV2() && t2.isDateV2()) {
             return Type.DATEV2;
         } else if (t1.isDatetime() && t2.isDatetime()) {
-            return DateLiteral.getDefaultDateType(Type.DATETIME);
+            return ScalarType.getDefaultDateType(Type.DATETIME);
         } else if (t1.isDatetime() && t2.isDatetimeV2()) {
             return t2;
         } else if (t1.isDatetimeV2() && t2.isDatetime()) {
@@ -1522,7 +1548,7 @@ public abstract class Type {
         } else if (t2.isDatetimeV2()) {
             return t2;
         } else {
-            return DateLiteral.getDefaultDateType(Type.DATETIME);
+            return ScalarType.getDefaultDateType(Type.DATETIME);
         }
     }
 

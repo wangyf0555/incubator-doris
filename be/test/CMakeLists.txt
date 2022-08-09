@@ -59,6 +59,8 @@ set(EXEC_TEST_FILES
     exec/s3_reader_test.cpp
     exec/multi_bytes_separator_test.cpp
     exec/hdfs_file_reader_test.cpp
+    vec/exec/parquet/parquet_thrift_test.cpp
+    vec/exec/parquet/parquet_reader_test.cpp
     # exec/new_olap_scan_node_test.cpp
     # exec/pre_aggregation_node_test.cpp
     # exec/partitioned_hash_table_test.cpp
@@ -175,29 +177,28 @@ set(OLAP_TEST_FILES
     olap/tablet_meta_manager_test.cpp
     olap/tablet_mgr_test.cpp
     olap/tablet_test.cpp
-    # TODO yiguolei: it is using alpha rowset to test, should use beta rowset
-    #olap/rowset/rowset_meta_manager_test.cpp
+    olap/rowset/rowset_meta_manager_test.cpp
     olap/rowset/rowset_meta_test.cpp
     olap/rowset/beta_rowset_test.cpp
     olap/rowset/unique_rowset_id_generator_test.cpp
     olap/rowset/rowset_tree_test.cpp
-    # TODO yiguolei: it is using alpha rowset to test, should use beta rowset
-    #olap/txn_manager_test.cpp
+    olap/txn_manager_test.cpp
     olap/generic_iterators_test.cpp
     olap/key_coder_test.cpp
     olap/short_key_index_test.cpp
+    olap/primary_key_index_test.cpp
     olap/page_cache_test.cpp
     olap/hll_test.cpp
     olap/selection_vector_test.cpp
     olap/block_column_predicate_test.cpp
     olap/options_test.cpp
-    olap/fs/file_block_manager_test.cpp
     olap/common_test.cpp
     olap/primary_key_index_test.cpp
     # olap/memtable_flush_executor_test.cpp
     # olap/push_handler_test.cpp
     olap/tablet_cooldown_test.cpp
-    olap/tablet_clone_test.cpp
+    olap/rowid_conversion_test.cpp
+    olap/remote_rowset_gc_test.cpp
 )
 
 set(RUNTIME_TEST_FILES
@@ -316,6 +317,7 @@ set(UTIL_TEST_FILES
     util/quantile_state_test.cpp
     util/hdfs_storage_backend_test.cpp
     util/interval_tree_test.cpp
+    util/key_util_test.cpp
 )
 set(VEC_TEST_FILES
     vec/aggregate_functions/agg_collect_test.cpp

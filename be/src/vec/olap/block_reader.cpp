@@ -34,7 +34,7 @@ BlockReader::~BlockReader() {
 
 Status BlockReader::_init_collect_iter(const ReaderParams& read_params,
                                        std::vector<RowsetReaderSharedPtr>* valid_rs_readers) {
-    _vcollect_iter.init(this);
+    _vcollect_iter.init(this, read_params.read_orderby_key, read_params.read_orderby_key_reverse);
     std::vector<RowsetReaderSharedPtr> rs_readers;
     auto res = _capture_rs_readers(read_params, &rs_readers);
     if (!res.ok()) {
@@ -106,8 +106,14 @@ void BlockReader::_init_agg_state(const ReaderParams& read_params) {
 Status BlockReader::init(const ReaderParams& read_params) {
     TabletReader::init(read_params);
 
-    auto return_column_size =
-            read_params.origin_return_columns->size() - (_sequence_col_idx != -1 ? 1 : 0);
+    int32_t return_column_size = 0;
+    // read sequence column if not reader_query
+    if (read_params.reader_type != ReaderType::READER_QUERY) {
+        return_column_size = read_params.origin_return_columns->size();
+    } else {
+        return_column_size =
+                read_params.origin_return_columns->size() - (_sequence_col_idx != -1 ? 1 : 0);
+    }
     _return_columns_loc.resize(read_params.return_columns.size());
     for (int i = 0; i < return_column_size; ++i) {
         auto cid = read_params.origin_return_columns->at(i);
@@ -140,7 +146,11 @@ Status BlockReader::init(const ReaderParams& read_params) {
         _next_block_func = &BlockReader::_direct_next_block;
         break;
     case KeysType::UNIQUE_KEYS:
-        _next_block_func = &BlockReader::_unique_key_next_block;
+        if (_reader_context.enable_unique_key_merge_on_write) {
+            _next_block_func = &BlockReader::_direct_next_block;
+        } else {
+            _next_block_func = &BlockReader::_unique_key_next_block;
+        }
         break;
     case KeysType::AGG_KEYS:
         _next_block_func = &BlockReader::_agg_key_next_block;
@@ -161,6 +171,13 @@ Status BlockReader::_direct_next_block(Block* block, MemPool* mem_pool, ObjectPo
         return res;
     }
     *eof = res.precise_code() == OLAP_ERR_DATA_EOF;
+    if (UNLIKELY(_reader_context.record_rowids)) {
+        res = _vcollect_iter.current_block_row_locations(&_block_row_locations);
+        if (UNLIKELY(!res.ok() && res != Status::OLAPInternalError(OLAP_ERR_DATA_EOF))) {
+            return res;
+        }
+        DCHECK_EQ(_block_row_locations.size(), block->rows());
+    }
     return Status::OK();
 }
 
@@ -228,9 +245,15 @@ Status BlockReader::_unique_key_next_block(Block* block, MemPool* mem_pool, Obje
 
     auto target_block_row = 0;
     auto target_columns = block->mutate_columns();
+    if (UNLIKELY(_reader_context.record_rowids)) {
+        _block_row_locations.resize(_batch_size);
+    }
 
     do {
         _insert_data_normal(target_columns);
+        if (UNLIKELY(_reader_context.record_rowids)) {
+            _block_row_locations[target_block_row] = _vcollect_iter.current_row_location();
+        }
         target_block_row++;
 
         // the version is in reverse order, the first row is the highest version,
@@ -239,6 +262,9 @@ Status BlockReader::_unique_key_next_block(Block* block, MemPool* mem_pool, Obje
         auto res = _vcollect_iter.next(&_next_row);
         if (UNLIKELY(res.precise_code() == OLAP_ERR_DATA_EOF)) {
             *eof = true;
+            if (UNLIKELY(_reader_context.record_rowids)) {
+                _block_row_locations.resize(target_block_row);
+            }
             break;
         }
 

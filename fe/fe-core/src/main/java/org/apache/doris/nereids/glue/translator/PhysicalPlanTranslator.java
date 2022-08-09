@@ -37,20 +37,27 @@ import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
 import org.apache.doris.nereids.trees.expressions.SlotReference;
 import org.apache.doris.nereids.trees.expressions.functions.AggregateFunction;
-import org.apache.doris.nereids.trees.expressions.visitor.SlotExtractor;
 import org.apache.doris.nereids.trees.plans.AggPhase;
 import org.apache.doris.nereids.trees.plans.JoinType;
 import org.apache.doris.nereids.trees.plans.Plan;
+import org.apache.doris.nereids.trees.plans.PlanType;
+import org.apache.doris.nereids.trees.plans.logical.LogicalSort;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalAggregate;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalFilter;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHashJoin;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalHeapSort;
+import org.apache.doris.nereids.trees.plans.physical.PhysicalLimit;
+import org.apache.doris.nereids.trees.plans.physical.PhysicalNestedLoopJoin;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalOlapScan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalPlan;
 import org.apache.doris.nereids.trees.plans.physical.PhysicalProject;
 import org.apache.doris.nereids.trees.plans.visitor.DefaultPlanVisitor;
 import org.apache.doris.nereids.util.ExpressionUtils;
+import org.apache.doris.nereids.util.JoinUtils;
+import org.apache.doris.nereids.util.SlotExtractor;
+import org.apache.doris.nereids.util.Utils;
 import org.apache.doris.planner.AggregationNode;
+import org.apache.doris.planner.CrossJoinNode;
 import org.apache.doris.planner.DataPartition;
 import org.apache.doris.planner.ExchangeNode;
 import org.apache.doris.planner.HashJoinNode;
@@ -111,10 +118,19 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         if (rootFragment.isPartitioned() && rootFragment.getPlanRoot().getNumInstances() > 1) {
             rootFragment = exchangeToMergeFragment(rootFragment, context);
         }
-        List<Expr> outputExprs = Lists.newArrayList();
-        physicalPlan.getOutput().stream().map(Slot::getExprId)
-                .forEach(exprId -> outputExprs.add(context.findSlotRef(exprId)));
-        rootFragment.setOutputExprs(outputExprs);
+        // TODO: trick here, we need push project down
+        if (physicalPlan.getType() == PlanType.PHYSICAL_PROJECT) {
+            PhysicalProject<Plan> physicalProject = (PhysicalProject<Plan>) physicalPlan;
+            List<Expr> outputExprs = physicalProject.getProjects().stream()
+                    .map(e -> ExpressionTranslator.translate(e, context))
+                    .collect(Collectors.toList());
+            rootFragment.setOutputExprs(outputExprs);
+        } else {
+            List<Expr> outputExprs = Lists.newArrayList();
+            physicalPlan.getOutput().stream().map(Slot::getExprId)
+                    .forEach(exprId -> outputExprs.add(context.findSlotRef(exprId)));
+            rootFragment.setOutputExprs(outputExprs);
+        }
         rootFragment.getPlanRoot().convertToVectoriezd();
         for (PlanFragment fragment : context.getPlanFragmentList()) {
             fragment.finalize(null);
@@ -139,8 +155,8 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         //    1. add a project after agg, if agg function is not the top output expression.
         //    2. introduce canonicalized, semanticEquals and deterministic in Expression
         //       for removing duplicate.
-        List<Expression> groupByExpressionList = aggregate.getGroupByExprList();
-        List<NamedExpression> outputExpressionList = aggregate.getOutputExpressionList();
+        List<Expression> groupByExpressionList = aggregate.getGroupByExpressions();
+        List<NamedExpression> outputExpressionList = aggregate.getOutputExpressions();
 
         // 1. generate slot reference for each group expression
         List<SlotReference> groupSlotList = Lists.newArrayList();
@@ -179,7 +195,7 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         }
 
         // process partition list
-        List<Expression> partitionExpressionList = aggregate.getPartitionExprList();
+        List<Expression> partitionExpressionList = aggregate.getPartitionExpressions();
         List<Expr> execPartitionExpressions = partitionExpressionList.stream()
                 .map(e -> ExpressionTranslator.translate(e, context)).collect(Collectors.toList());
         DataPartition mergePartition = DataPartition.UNPARTITIONED;
@@ -234,7 +250,7 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         } catch (Exception e) {
             throw new AnalysisException(e.getMessage());
         }
-        exec(olapScanNode::init);
+        Utils.execWithUncheckedException(olapScanNode::init);
         olapScanNode.addConjuncts(execConjunctsList);
         context.addScanNode(olapScanNode);
         // Create PlanFragment
@@ -265,10 +281,14 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
      *       After a+1 can be parsed , reprocessing.
      */
     @Override
+    public PlanFragment visitLogicalSort(LogicalSort<Plan> sort, PlanTranslatorContext context) {
+        return super.visitLogicalSort(sort, context);
+    }
+
+    @Override
     public PlanFragment visitPhysicalHeapSort(PhysicalHeapSort<Plan> sort,
             PlanTranslatorContext context) {
         PlanFragment childFragment = sort.child(0).accept(this, context);
-        long limit = sort.getLimit();
         // TODO: need to discuss how to process field: SortNode::resolvedTupleExprs
         List<Expr> oldOrderingExprList = Lists.newArrayList();
         List<Boolean> ascOrderList = Lists.newArrayList();
@@ -296,29 +316,17 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         SortInfo sortInfo = new SortInfo(newOrderingExprList, ascOrderList, nullsFirstParamList, tupleDesc);
         PlanNode childNode = childFragment.getPlanRoot();
         // TODO: notice topN
-        SortNode sortNode = new SortNode(context.nextPlanNodeId(), childNode, sortInfo, true,
-                sort.hasLimit(), sort.getOffset());
+        SortNode sortNode = new SortNode(context.nextPlanNodeId(), childNode, sortInfo, true);
         sortNode.finalizeForNereids(tupleDesc, sortTupleOutputList, oldOrderingExprList);
         childFragment.addPlanRoot(sortNode);
+        //isPartitioned()==true means there is only one instance, so no merge phase
         if (!childFragment.isPartitioned()) {
             return childFragment;
         }
         PlanFragment mergeFragment = createParentFragment(childFragment, DataPartition.UNPARTITIONED, context);
         ExchangeNode exchangeNode = (ExchangeNode) mergeFragment.getPlanRoot();
-        exchangeNode.unsetLimit();
-        long offset = sort.getOffset();
-        exchangeNode.setMergeInfo(sortNode.getSortInfo(), offset);
-
-        // Child nodes should not process the offset. If there is a limit,
-        // the child nodes need only return (offset + limit) rows.
-        SortNode childSortNode = (SortNode) childFragment.getPlanRoot();
-        Preconditions.checkState(sortNode == childSortNode);
-        if (sortNode.hasLimit()) {
-            childSortNode.unsetLimit();
-            childSortNode.setLimit(limit + offset);
-        }
-        childSortNode.setOffset(0);
-        context.addPlanFragment(mergeFragment);
+        //exchangeNode.limit/offset will be set in when translating  PhysicalLimit
+        exchangeNode.setMergeInfo(sortNode.getSortInfo());
         return mergeFragment;
     }
 
@@ -333,26 +341,56 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         PlanNode rightFragmentPlanRoot = rightFragment.getPlanRoot();
         JoinType joinType = hashJoin.getJoinType();
 
-        if (joinType.equals(JoinType.CROSS_JOIN)
-                || (joinType.equals(JoinType.INNER_JOIN) && !hashJoin.getCondition().isPresent())) {
+        if (JoinUtils.shouldNestedLoopJoin(hashJoin)) {
             throw new RuntimeException("Physical hash join could not execute without equal join condition.");
         } else {
             Expression eqJoinExpression = hashJoin.getCondition().get();
-            List<Expr> execEqConjunctList = ExpressionUtils.extractConjunct(eqJoinExpression).stream()
+            List<Expr> execEqConjunctList = ExpressionUtils.extractConjunction(eqJoinExpression).stream()
                     .map(EqualTo.class::cast)
                     .map(e -> swapEqualToForChildrenOrder(e, hashJoin.left().getOutput()))
                     .map(e -> ExpressionTranslator.translate(e, context))
                     .collect(Collectors.toList());
 
+            TupleDescriptor outputDescriptor = context.generateTupleDesc();
+            List<Expr> srcToOutput = hashJoin.getOutput().stream()
+                    .map(SlotReference.class::cast)
+                    .peek(s -> context.createSlotDesc(outputDescriptor, s))
+                    .map(e -> ExpressionTranslator.translate(e, context))
+                    .collect(Collectors.toList());
+
             HashJoinNode hashJoinNode = new HashJoinNode(context.nextPlanNodeId(), leftFragmentPlanRoot,
-                    rightFragmentPlanRoot,
-                    JoinType.toJoinOperator(joinType), execEqConjunctList, Lists.newArrayList());
+                    rightFragmentPlanRoot, JoinType.toJoinOperator(joinType), execEqConjunctList, Lists.newArrayList(),
+                    srcToOutput, outputDescriptor, outputDescriptor);
 
             hashJoinNode.setDistributionMode(DistributionMode.BROADCAST);
             hashJoinNode.setChild(0, leftFragmentPlanRoot);
             connectChildFragment(hashJoinNode, 1, leftFragment, rightFragment, context);
             leftFragment.setPlanRoot(hashJoinNode);
             return leftFragment;
+        }
+    }
+
+    @Override
+    public PlanFragment visitPhysicalNestedLoopJoin(PhysicalNestedLoopJoin<Plan, Plan> nestedLoopJoin,
+            PlanTranslatorContext context) {
+        // NOTICE: We must visit from right to left, to ensure the last fragment is root fragment
+        // TODO: we should add a helper method to wrap this logic.
+        //   Maybe something like private List<PlanFragment> postOrderVisitChildren(
+        //       PhysicalPlan plan, PlanVisitor visitor, Context context).
+        PlanFragment rightFragment = nestedLoopJoin.child(1).accept(this, context);
+        PlanFragment leftFragment = nestedLoopJoin.child(0).accept(this, context);
+        PlanNode leftFragmentPlanRoot = leftFragment.getPlanRoot();
+        PlanNode rightFragmentPlanRoot = rightFragment.getPlanRoot();
+        if (JoinUtils.shouldNestedLoopJoin(nestedLoopJoin)) {
+            CrossJoinNode crossJoinNode =
+                    new CrossJoinNode(context.nextPlanNodeId(), leftFragmentPlanRoot, rightFragmentPlanRoot, null);
+            rightFragment.getPlanRoot().setCompactData(false);
+            crossJoinNode.setChild(0, leftFragment.getPlanRoot());
+            connectChildFragment(crossJoinNode, 1, leftFragment, rightFragment, context);
+            leftFragment.setPlanRoot(crossJoinNode);
+            return leftFragment;
+        } else {
+            throw new RuntimeException("Physical nested loop join could not execute with equal join condition.");
         }
     }
 
@@ -383,8 +421,41 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         PlanFragment inputFragment = filter.child(0).accept(this, context);
         PlanNode planNode = inputFragment.getPlanRoot();
         Expression expression = filter.getPredicates();
-        List<Expression> expressionList = ExpressionUtils.extractConjunct(expression);
+        List<Expression> expressionList = ExpressionUtils.extractConjunction(expression);
         expressionList.stream().map(e -> ExpressionTranslator.translate(e, context)).forEach(planNode::addConjunct);
+        return inputFragment;
+    }
+
+    @Override
+    public PlanFragment visitPhysicalLimit(PhysicalLimit<Plan> physicalLimit, PlanTranslatorContext context) {
+        PlanFragment inputFragment = physicalLimit.child(0).accept(this, context);
+        PlanNode child = inputFragment.getPlanRoot();
+
+        // physical plan:  limit --> sort
+        // after translate, it could be:
+        // 1. limit->sort => set (limit and offset) on sort
+        // 2. limit->exchange->sort => set (limit and offset) on exchange, set sort.limit = limit+offset
+        if (child instanceof SortNode) {
+            SortNode sort = (SortNode) child;
+            sort.setLimit(physicalLimit.getLimit());
+            sort.setOffset(physicalLimit.getOffset());
+            return inputFragment;
+        }
+        if (child instanceof ExchangeNode) {
+            ExchangeNode exchangeNode = (ExchangeNode) child;
+            exchangeNode.setLimit(physicalLimit.getLimit());
+            //we do not check if this is a merging exchange here,
+            //since this guaranteed by translating logic plan to physical plan
+            exchangeNode.setOffset(physicalLimit.getOffset());
+            if (exchangeNode.getChild(0) instanceof SortNode) {
+                SortNode sort = (SortNode) exchangeNode.getChild(0);
+                sort.setLimit(physicalLimit.getLimit() + physicalLimit.getOffset());
+                sort.setOffset(0);
+            }
+            return inputFragment;
+        }
+        //for other PlanNode, just set limit as limit+offset
+        child.setLimit(physicalLimit.getLimit() + physicalLimit.getOffset());
         return inputFragment;
     }
 
@@ -472,24 +543,5 @@ public class PhysicalPlanTranslator extends DefaultPlanVisitor<PlanFragment, Pla
         inputFragment.setDestination(mergePlan);
         context.addPlanFragment(fragment);
         return fragment;
-    }
-
-    /**
-     * Helper function to eliminate unnecessary checked exception caught requirement from the main logic of translator.
-     *
-     * @param f function which would invoke the logic of
-     *        stale code from old optimizer that could throw
-     *        a checked exception
-     */
-    public void exec(FuncWrapper f) {
-        try {
-            f.exec();
-        } catch (Exception e) {
-            throw new RuntimeException(e.getMessage(), e);
-        }
-    }
-
-    private interface FuncWrapper {
-        void exec() throws Exception;
     }
 }

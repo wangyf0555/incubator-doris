@@ -23,6 +23,7 @@ import org.apache.doris.nereids.trees.expressions.Expression;
 import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.PlanType;
+import org.apache.doris.nereids.trees.plans.algebra.Project;
 import org.apache.doris.nereids.trees.plans.visitor.PlanVisitor;
 
 import com.google.common.base.Preconditions;
@@ -35,7 +36,7 @@ import java.util.Optional;
 /**
  * Physical project plan.
  */
-public class PhysicalProject<CHILD_TYPE extends Plan> extends PhysicalUnary<CHILD_TYPE> {
+public class PhysicalProject<CHILD_TYPE extends Plan> extends PhysicalUnary<CHILD_TYPE> implements Project {
 
     private final List<NamedExpression> projects;
 
@@ -44,7 +45,7 @@ public class PhysicalProject<CHILD_TYPE extends Plan> extends PhysicalUnary<CHIL
     }
 
     public PhysicalProject(List<NamedExpression> projects, Optional<GroupExpression> groupExpression,
-                           LogicalProperties logicalProperties, CHILD_TYPE child) {
+            LogicalProperties logicalProperties, CHILD_TYPE child) {
         super(PlanType.PHYSICAL_PROJECT, groupExpression, logicalProperties, child);
         this.projects = Objects.requireNonNull(projects, "projects can not be null");
     }
@@ -57,6 +58,24 @@ public class PhysicalProject<CHILD_TYPE extends Plan> extends PhysicalUnary<CHIL
     public String toString() {
         return "Project (" + StringUtils.join(projects, ", ") + ")";
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || getClass() != o.getClass()) {
+            return false;
+        }
+        PhysicalProject that = (PhysicalProject) o;
+        return projects.equals(that.projects);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(projects);
+    }
+
 
     @Override
     public <R, C> R accept(PlanVisitor<R, C> visitor, C context) {

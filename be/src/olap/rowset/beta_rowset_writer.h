@@ -57,6 +57,10 @@ public:
 
     RowsetSharedPtr build() override;
 
+    // build a tmp rowset for load segment to calc delete_bitmap
+    // for this segment
+    RowsetSharedPtr build_tmp() override;
+
     Version version() override { return _context.version; }
 
     int64_t num_rows() const override { return _num_rows_written; }
@@ -64,6 +68,11 @@ public:
     RowsetId rowset_id() override { return _context.rowset_id; }
 
     RowsetTypePB type() const override { return RowsetTypePB::BETA_ROWSET; }
+
+    Status get_segment_num_rows(std::vector<uint32_t>* segment_num_rows) const override {
+        *segment_num_rows = _segment_num_rows;
+        return Status::OK();
+    }
 
 private:
     template <typename RowType>
@@ -74,6 +83,7 @@ private:
     Status _create_segment_writer(std::unique_ptr<segment_v2::SegmentWriter>* writer);
 
     Status _flush_segment_writer(std::unique_ptr<segment_v2::SegmentWriter>* writer);
+    void _build_rowset_meta(std::shared_ptr<RowsetMeta> rowset_meta);
 
 private:
     RowsetWriterContext _context;
@@ -85,8 +95,7 @@ private:
     /// In other processes, such as merger or schema change, we will use this unified writer for data writing.
     std::unique_ptr<segment_v2::SegmentWriter> _segment_writer;
     mutable SpinLock _lock; // lock to protect _wblocks.
-    // TODO(lingbin): it is better to wrapper in a Batch?
-    std::vector<std::unique_ptr<io::FileWriter>> _file_writers;
+    std::vector<io::FileWriterPtr> _file_writers;
 
     // counters and statistics maintained during data write
     std::atomic<int64_t> _num_rows_written;
@@ -96,6 +105,11 @@ private:
 
     bool _is_pending = false;
     bool _already_built = false;
+
+    // for unique key table with merge-on-write
+    std::vector<KeyBoundsPB> _segments_encoded_key_bounds;
+    // record rows number of every segment
+    std::vector<uint32_t> _segment_num_rows;
 };
 
 } // namespace doris

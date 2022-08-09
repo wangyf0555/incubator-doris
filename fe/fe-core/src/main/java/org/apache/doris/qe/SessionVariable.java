@@ -24,6 +24,7 @@ import org.apache.doris.qe.VariableMgr.VarAttr;
 import org.apache.doris.thrift.TQueryOptions;
 import org.apache.doris.thrift.TResourceLimit;
 
+import com.google.common.base.Strings;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
@@ -91,6 +92,8 @@ public class SessionVariable implements Serializable, Writable {
     public static final String ENABLE_PARTITION_CACHE = "enable_partition_cache";
 
     public static final String ENABLE_COST_BASED_JOIN_REORDER = "enable_cost_based_join_reorder";
+
+    public static final String ENABLE_NEREIDS_CBO = "enable_nereids_cbo";
 
     public static final int MIN_EXEC_INSTANCE_NUM = 1;
     public static final int MAX_EXEC_INSTANCE_NUM = 32;
@@ -171,9 +174,13 @@ public class SessionVariable implements Serializable, Writable {
 
     public static final String ENABLE_VECTORIZED_ENGINE = "enable_vectorized_engine";
 
+    public static final String ENABLE_SINGLE_DISTINCT_COLUMN_OPT = "enable_single_distinct_column_opt";
+
     public static final String CPU_RESOURCE_LIMIT = "cpu_resource_limit";
 
     public static final String ENABLE_PARALLEL_OUTFILE = "enable_parallel_outfile";
+
+    public static final String ENABLE_LATERAL_VIEW = "enable_lateral_view";
 
     public static final String SQL_QUOTE_SHOW_CREATE = "sql_quote_show_create";
 
@@ -190,7 +197,17 @@ public class SessionVariable implements Serializable, Writable {
 
     static final String ENABLE_ARRAY_TYPE = "enable_array_type";
 
-    public static final String ENABLE_NEREIDS = "enable_nereids";
+    public static final String ENABLE_NEREIDS_PLANNER = "enable_nereids_planner";
+
+    public static final String ENABLE_NEREIDS_REORDER_TO_ELIMINATE_CROSS_JOIN =
+            "enable_nereids_reorder_to_eliminate_cross_join";
+
+    public static final String ENABLE_REMOVE_NO_CONJUNCTS_RUNTIME_FILTER =
+            "enable_remove_no_conjuncts_runtime_filter_policy";
+
+    static final String SESSION_CONTEXT = "session_context";
+
+    public static final String ENABLE_SINGLE_REPLICA_INSERT = "enable_single_replica_insert";
 
     // session origin value
     public Map<Field, String> sessionOriginValue = new HashMap<Field, String>();
@@ -218,6 +235,12 @@ public class SessionVariable implements Serializable, Writable {
     // if true, need report to coordinator when plan fragment execute successfully.
     @VariableMgr.VarAttr(name = ENABLE_PROFILE, needForward = true)
     public boolean enableProfile = false;
+
+    // using hashset intead of group by + count can improve performance
+    //        but may cause rpc failed when cluster has less BE
+    // Whether this switch is turned on depends on the BE number
+    @VariableMgr.VarAttr(name = ENABLE_SINGLE_DISTINCT_COLUMN_OPT)
+    public boolean enableSingleDistinctColumnOpt = false;
 
     // Set sqlMode to empty string
     @VariableMgr.VarAttr(name = SQL_MODE, needForward = true)
@@ -425,6 +448,9 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = ENABLE_COST_BASED_JOIN_REORDER)
     private boolean enableJoinReorderBasedCost = false;
 
+    @VariableMgr.VarAttr(name = ENABLE_NEREIDS_CBO)
+    private boolean enableNereidsCBO = false;
+
     @VariableMgr.VarAttr(name = ENABLE_FOLD_CONSTANT_BY_BE)
     private boolean enableFoldConstantByBe = false;
 
@@ -465,6 +491,7 @@ public class SessionVariable implements Serializable, Writable {
     @VariableMgr.VarAttr(name = BLOCK_ENCRYPTION_MODE)
     private String blockEncryptionMode = "";
 
+
     @VariableMgr.VarAttr(name = ENABLE_PROJECTION)
     private boolean enableProjection = true;
 
@@ -477,8 +504,25 @@ public class SessionVariable implements Serializable, Writable {
      * the new optimizer is fully developed. I hope that day
      * would be coming soon.
      */
-    @VariableMgr.VarAttr(name = ENABLE_NEREIDS)
-    private boolean enableNereids = false;
+    @VariableMgr.VarAttr(name = ENABLE_NEREIDS_PLANNER)
+    private boolean enableNereidsPlanner = false;
+
+    @VariableMgr.VarAttr(name = ENABLE_NEREIDS_REORDER_TO_ELIMINATE_CROSS_JOIN)
+    private boolean enableNereidsReorderToEliminateCrossJoin = true;
+
+    @VariableMgr.VarAttr(name = ENABLE_REMOVE_NO_CONJUNCTS_RUNTIME_FILTER)
+    public boolean enableRemoveNoConjunctsRuntimeFilterPolicy = false;
+
+    /**
+     * The client can pass some special information by setting this session variable in the format: "k1:v1;k2:v2".
+     * For example, trace_id can be passed to trace the query request sent by the user.
+     * set session_context="trace_id:1234565678";
+     */
+    @VariableMgr.VarAttr(name = SESSION_CONTEXT, needForward = true)
+    public String sessionContext = "";
+
+    @VariableMgr.VarAttr(name = ENABLE_SINGLE_REPLICA_INSERT, needForward = true)
+    public boolean enableSingleReplicaInsert = false;
 
     public String getBlockEncryptionMode() {
         return blockEncryptionMode;
@@ -502,6 +546,10 @@ public class SessionVariable implements Serializable, Writable {
 
     public boolean enableProfile() {
         return enableProfile;
+    }
+
+    public boolean enableSingleDistinctColumnOpt() {
+        return enableSingleDistinctColumnOpt;
     }
 
     public int getWaitTimeoutS() {
@@ -967,6 +1015,14 @@ public class SessionVariable implements Serializable, Writable {
         this.enableJoinReorderBasedCost = enableJoinReorderBasedCost;
     }
 
+    public boolean isEnableNereidsCBO() {
+        return enableNereidsCBO;
+    }
+
+    public void setEnableNereidsCBO(boolean enableNereidsCBO) {
+        this.enableNereidsCBO = enableNereidsCBO;
+    }
+
     public void setDisableJoinReorder(boolean disableJoinReorder) {
         this.disableJoinReorder = disableJoinReorder;
     }
@@ -984,18 +1040,44 @@ public class SessionVariable implements Serializable, Writable {
      *
      * @return true if both nereids and vectorized engine are enabled
      */
-    public boolean isEnableNereids() {
-        return enableNereids && enableVectorizedEngine;
+    public boolean isEnableNereidsPlanner() {
+        return enableNereidsPlanner && enableVectorizedEngine;
     }
 
-    public void setEnableNereids(boolean enableNereids) {
-        this.enableNereids = enableNereids;
+    public void setEnableNereidsPlanner(boolean enableNereidsPlanner) {
+        this.enableNereidsPlanner = enableNereidsPlanner;
+    }
+
+    public boolean isEnableNereidsReorderToEliminateCrossJoin() {
+        return enableNereidsReorderToEliminateCrossJoin;
+    }
+
+    public void setEnableNereidsReorderToEliminateCrossJoin(boolean value) {
+        enableNereidsReorderToEliminateCrossJoin = value;
+    }
+
+    public boolean isEnableSingleReplicaInsert() {
+        return enableSingleReplicaInsert;
+    }
+
+    public void setEnableSingleReplicaInsert(boolean enableSingleReplicaInsert) {
+        this.enableSingleReplicaInsert = enableSingleReplicaInsert;
     }
 
     /**
      * Serialize to thrift object.
      * Used for rest api.
      **/
+    public boolean isEnableRemoveNoConjunctsRuntimeFilterPolicy() {
+        return enableRemoveNoConjunctsRuntimeFilterPolicy;
+    }
+
+    public void setEnableRemoveNoConjunctsRuntimeFilterPolicy(boolean enableRemoveNoConjunctsRuntimeFilterPolicy) {
+        this.enableRemoveNoConjunctsRuntimeFilterPolicy = enableRemoveNoConjunctsRuntimeFilterPolicy;
+    }
+
+    // Serialize to thrift object
+    // used for rest api
     public TQueryOptions toThrift() {
         TQueryOptions tResult = new TQueryOptions();
         tResult.setMemLimit(maxExecMemByte);
@@ -1220,4 +1302,28 @@ public class SessionVariable implements Serializable, Writable {
         return queryOptions;
     }
 
+    /**
+     * The sessionContext is as follows:
+     * "k1:v1;k2:v2;..."
+     * Here we want to get value with key named "trace_id",
+     * Return empty string is not found.
+     *
+     * @return
+     */
+    public String getTraceId() {
+        if (Strings.isNullOrEmpty(sessionContext)) {
+            return "";
+        }
+        String[] parts = sessionContext.split(";");
+        for (String part : parts) {
+            String[] innerParts = part.split(":");
+            if (innerParts.length != 2) {
+                continue;
+            }
+            if (innerParts[0].equals("trace_id")) {
+                return innerParts[1];
+            }
+        }
+        return "";
+    }
 }

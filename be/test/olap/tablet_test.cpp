@@ -23,8 +23,11 @@
 
 #include "olap/olap_define.h"
 #include "olap/rowset/beta_rowset.h"
+#include "olap/storage_engine.h"
 #include "olap/storage_policy_mgr.h"
 #include "olap/tablet_meta.h"
+#include "olap/tablet_schema_cache.h"
+#include "testutil/mock_rowset.h"
 #include "util/time.h"
 
 using namespace std;
@@ -33,14 +36,14 @@ namespace doris {
 
 using RowsetMetaSharedContainerPtr = std::shared_ptr<std::vector<RowsetMetaSharedPtr>>;
 
+static StorageEngine* k_engine = nullptr;
+
 class TestTablet : public testing::Test {
 public:
     virtual ~TestTablet() {}
 
-    virtual void SetUp() {
-        _tablet_meta = static_cast<TabletMetaSharedPtr>(new TabletMeta(
-                1, 2, 15673, 15674, 4, 5, TTabletSchema(), 6, {{7, 8}}, UniqueId(9, 10),
-                TTabletType::TABLET_TYPE_DISK, TStorageMedium::HDD, "", TCompressionType::LZ4F));
+    void SetUp() override {
+        _tablet_meta = new_tablet_meta(TTabletSchema());
         _json_rowset_meta = R"({
             "rowset_id": 540081,
             "tablet_id": 15673,
@@ -89,9 +92,26 @@ public:
                 }]
             }
         })";
+
+        doris::EngineOptions options;
+        k_engine = new StorageEngine(options);
+        StorageEngine::_s_instance = k_engine;
     }
 
-    virtual void TearDown() {}
+    void TearDown() override {
+        if (k_engine != nullptr) {
+            k_engine->stop();
+            delete k_engine;
+            k_engine = nullptr;
+        }
+    }
+
+    TabletMetaSharedPtr new_tablet_meta(TTabletSchema schema, bool enable_merge_on_write = false) {
+        return static_cast<TabletMetaSharedPtr>(
+                new TabletMeta(1, 2, 15673, 15674, 4, 5, schema, 6, {{7, 8}}, UniqueId(9, 10),
+                               TTabletType::TABLET_TYPE_DISK, TCompressionType::LZ4F, std::string(),
+                               enable_merge_on_write));
+    }
 
     void init_rs_meta(RowsetMetaSharedPtr& pb1, int64_t start, int64_t end) {
         pb1->init_from_json(_json_rowset_meta);
@@ -109,6 +129,16 @@ public:
         pb1->set_end_version(end);
         pb1->set_creation_time(10000);
         pb1->set_num_segments(2);
+    }
+
+    void init_rs_meta(RowsetMetaSharedPtr& pb1, int64_t start, int64_t end,
+                      std::vector<KeyBoundsPB> keybounds) {
+        pb1->init_from_json(_json_rowset_meta);
+        pb1->set_start_version(start);
+        pb1->set_end_version(end);
+        pb1->set_creation_time(10000);
+        pb1->set_segments_key_bounds(keybounds);
+        pb1->set_num_segments(keybounds.size());
     }
 
     void init_all_rs_meta(std::vector<RowsetMetaSharedPtr>* rs_metas) {
@@ -176,6 +206,18 @@ public:
         rs_metas->push_back(v5);
     }
 
+    std::vector<KeyBoundsPB> convert_key_bounds(
+            std::vector<std::pair<std::string, std::string>> key_pairs) {
+        std::vector<KeyBoundsPB> res;
+        for (auto pair : key_pairs) {
+            KeyBoundsPB key_bounds;
+            key_bounds.set_min_key(pair.first);
+            key_bounds.set_max_key(pair.second);
+            res.push_back(key_bounds);
+        }
+        return res;
+    }
+
 protected:
     std::string _json_rowset_meta;
     TabletMetaSharedPtr _tablet_meta;
@@ -192,9 +234,7 @@ TEST_F(TestTablet, delete_expired_stale_rowset) {
         _tablet_meta->add_rs_meta(rowset);
     }
 
-    StorageParamPB storage_param;
-    storage_param.set_storage_medium(StorageMediumPB::HDD);
-    TabletSharedPtr _tablet(new Tablet(_tablet_meta, storage_param, nullptr));
+    TabletSharedPtr _tablet(new Tablet(_tablet_meta, nullptr));
     _tablet->init();
 
     for (auto ptr : expired_rs_metas) {
@@ -240,11 +280,9 @@ TEST_F(TestTablet, cooldown_policy) {
         _tablet_meta->add_rs_meta(rowset);
     }
 
-    StorageParamPB storage_param;
-    storage_param.set_storage_medium(StorageMediumPB::HDD);
-    TabletSharedPtr _tablet(new Tablet(_tablet_meta, storage_param, nullptr));
+    TabletSharedPtr _tablet(new Tablet(_tablet_meta, nullptr));
     _tablet->init();
-    _tablet->set_cooldown_resource("test_policy_name");
+    _tablet->set_storage_policy("test_policy_name");
 
     _tablet->_rs_version_map[ptr1->version()] = rowset1;
     _tablet->_rs_version_map[ptr2->version()] = rowset2;
@@ -331,6 +369,63 @@ TEST_F(TestTablet, cooldown_policy) {
         ASSERT_EQ(cooldown_timestamp, -1);
         ASSERT_EQ(file_size, 84699);
     }
+}
+
+TEST_F(TestTablet, rowset_tree_update) {
+    TTabletSchema tschema;
+    tschema.keys_type = TKeysType::UNIQUE_KEYS;
+    TabletMetaSharedPtr tablet_meta = new_tablet_meta(tschema, true);
+    TabletSharedPtr tablet(new Tablet(tablet_meta, nullptr));
+    RowsetIdUnorderedSet rowset_ids;
+    tablet->init();
+
+    RowsetMetaSharedPtr rsm1(new RowsetMeta());
+    init_rs_meta(rsm1, 6, 7, convert_key_bounds({{"100", "200"}, {"300", "400"}}));
+    rsm1->set_tablet_schema(tablet->tablet_schema());
+    RowsetId id1;
+    id1.init(10010);
+    RowsetSharedPtr rs_ptr1;
+    MockRowset::create_rowset(tablet->tablet_schema(), "", rsm1, &rs_ptr1, false);
+    tablet->add_inc_rowset(rs_ptr1);
+    rowset_ids.insert(id1);
+
+    RowsetMetaSharedPtr rsm2(new RowsetMeta());
+    init_rs_meta(rsm2, 8, 8, convert_key_bounds({{"500", "999"}}));
+    rsm2->set_tablet_schema(tablet->tablet_schema());
+    RowsetId id2;
+    id2.init(10086);
+    rsm2->set_rowset_id(id2);
+    RowsetSharedPtr rs_ptr2;
+    MockRowset::create_rowset(tablet->tablet_schema(), "", rsm2, &rs_ptr2, false);
+    tablet->add_inc_rowset(rs_ptr2);
+    rowset_ids.insert(id2);
+
+    RowsetId id3;
+    id3.init(540081);
+    rowset_ids.insert(id3);
+
+    RowLocation loc;
+    // Key not in range.
+    ASSERT_TRUE(tablet->lookup_row_key("99", &rowset_ids, &loc, 7).is_not_found());
+    // Version too low.
+    ASSERT_TRUE(tablet->lookup_row_key("101", &rowset_ids, &loc, 3).is_not_found());
+    // Hit a segment, but since we don't have real data, return an internal error when loading the
+    // segment.
+    LOG(INFO) << tablet->lookup_row_key("101", &rowset_ids, &loc, 7).to_string();
+    ASSERT_TRUE(tablet->lookup_row_key("101", &rowset_ids, &loc, 7).precise_code() ==
+                OLAP_ERR_ROWSET_LOAD_FAILED);
+    // Key not in range.
+    ASSERT_TRUE(tablet->lookup_row_key("201", &rowset_ids, &loc, 7).is_not_found());
+    ASSERT_TRUE(tablet->lookup_row_key("300", &rowset_ids, &loc, 7).precise_code() ==
+                OLAP_ERR_ROWSET_LOAD_FAILED);
+    // Key not in range.
+    ASSERT_TRUE(tablet->lookup_row_key("499", &rowset_ids, &loc, 7).is_not_found());
+    // Version too low.
+    ASSERT_TRUE(tablet->lookup_row_key("500", &rowset_ids, &loc, 7).is_not_found());
+    // Hit a segment, but since we don't have real data, return an internal error when loading the
+    // segment.
+    ASSERT_TRUE(tablet->lookup_row_key("500", &rowset_ids, &loc, 8).precise_code() ==
+                OLAP_ERR_ROWSET_LOAD_FAILED);
 }
 
 } // namespace doris

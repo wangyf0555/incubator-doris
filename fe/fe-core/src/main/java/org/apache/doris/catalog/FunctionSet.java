@@ -1388,6 +1388,19 @@ public class FunctionSet<T> {
                 "",
                 "",
                 true, false, true, true));
+        addBuiltin(AggregateFunction.createBuiltin(FunctionSet.WINDOW_FUNNEL,
+                Lists.newArrayList(Type.BIGINT, Type.STRING, Type.DATETIMEV2, Type.BOOLEAN),
+                Type.INT,
+                Type.VARCHAR,
+                true,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                true, false, true, true));
 
         for (Type t : Type.getSupportedTypes()) {
             if (t.isNull()) {
@@ -2326,10 +2339,7 @@ public class FunctionSet<T> {
                 false, true, false, true));
 
         // collect_list
-        Type[] arraySubTypes = {Type.BOOLEAN, Type.SMALLINT, Type.TINYINT, Type.INT, Type.BIGINT, Type.LARGEINT,
-                Type.FLOAT, Type.DOUBLE, Type.DATE, Type.DATETIME, Type.DECIMALV2, Type.DECIMAL32, Type.DECIMAL64,
-                Type.DECIMAL128, Type.VARCHAR, Type.STRING};
-        for (Type t : arraySubTypes) {
+        for (Type t : Type.getArraySubTypes()) {
             addBuiltin(AggregateFunction.createBuiltin(COLLECT_LIST, Lists.newArrayList(t), new ArrayType(t), t,
                     "", "", "", "", "", true, false, true, true));
             addBuiltin(AggregateFunction.createBuiltin(COLLECT_SET, Lists.newArrayList(t), new ArrayType(t), t,
@@ -2462,6 +2472,16 @@ public class FunctionSet<T> {
                 prefix + "20timestamp_avg_removeEPN9doris_udf15FunctionContextERKNS1_11DateTimeValEPNS1_9StringValE",
                 prefix + "22timestamp_avg_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
                 false, true, false, true));
+        addBuiltin(AggregateFunction.createBuiltin("avg",
+                Lists.<Type>newArrayList(Type.DATEV2), Type.DATEV2, Type.DATEV2,
+                prefix + "8avg_initEPN9doris_udf15FunctionContextEPNS1_9StringValE",
+                prefix + "20timestamp_avg_updateEPN9doris_udf15FunctionContextERKNS1_11DateTimeValEPNS1_9StringValE",
+                prefix + "9avg_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
+                stringValSerializeOrFinalize,
+                prefix + "23timestamp_avg_get_valueEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                prefix + "20timestamp_avg_removeEPN9doris_udf15FunctionContextERKNS1_11DateTimeValEPNS1_9StringValE",
+                prefix + "22timestamp_avg_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE",
+                false, true, false, true));
 
         // Group_concat(string)
         addBuiltin(AggregateFunction.createBuiltin("group_concat", Lists.<Type>newArrayList(Type.VARCHAR), Type.VARCHAR,
@@ -2481,20 +2501,10 @@ public class FunctionSet<T> {
                         false, false));
         // Group_concat(string) vectorized
         addBuiltin(AggregateFunction.createBuiltin("group_concat", Lists.<Type>newArrayList(Type.VARCHAR), Type.VARCHAR,
-                        Type.VARCHAR, initNullString,
-                        prefix + "20string_concat_updateEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
-                        prefix + "19string_concat_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
-                        stringValSerializeOrFinalize,
-                        prefix + "22string_concat_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE", false,
-                        true, false, true));
+                Type.VARCHAR, initNullString, "", "", "", "", false, true, false, true));
         // Group_concat(string, string) vectorized
         addBuiltin(AggregateFunction.createBuiltin("group_concat", Lists.<Type>newArrayList(Type.VARCHAR, Type.VARCHAR),
-                        Type.VARCHAR, Type.VARCHAR, initNullString,
-                        prefix + "20string_concat_updateEPN9doris_udf15FunctionContextERKNS1_9StringValES6_PS4_",
-                        prefix + "19string_concat_mergeEPN9doris_udf15FunctionContextERKNS1_9StringValEPS4_",
-                        stringValSerializeOrFinalize,
-                        prefix + "22string_concat_finalizeEPN9doris_udf15FunctionContextERKNS1_9StringValE", false,
-                        true, false, true));
+                Type.VARCHAR, Type.VARCHAR, initNullString, "", "", "", "", false, true, false, true));
 
         // analytic functions
         // Rank
@@ -2711,11 +2721,10 @@ public class FunctionSet<T> {
                 "_ZN5doris19DummyTableFunctions22explode_numbersEPN9doris_udf15FunctionContextERKNS1_9IntValE");
 
         initTableFunctionListWithCombinator(EXPLODE);
-        addTableFunctionWithCombinator(EXPLODE, Type.INT, Function.NullableMode.ALWAYS_NULLABLE,
-                Lists.newArrayList(new ArrayType(Type.INT)), false,
-                "_ZN5doris19DummyTableFunctions7explodeEPN9doris_udf15FunctionContextERKNS1_13CollectionValE");
-        addTableFunctionWithCombinator(EXPLODE, Type.VARCHAR, Function.NullableMode.ALWAYS_NULLABLE,
-                Lists.newArrayList(new ArrayType(Type.VARCHAR)), false,
-                "_ZN5doris19DummyTableFunctions7explodeEPN9doris_udf15FunctionContextERKNS1_13CollectionValE");
+        for (Type subType : Type.getArraySubTypes()) {
+            addTableFunctionWithCombinator(EXPLODE, subType, Function.NullableMode.ALWAYS_NULLABLE,
+                    Lists.newArrayList(new ArrayType(subType)), false,
+                    "_ZN5doris19DummyTableFunctions7explodeEPN9doris_udf15FunctionContextERKNS1_13CollectionValE");
+        }
     }
 }

@@ -17,6 +17,7 @@
 
 package org.apache.doris.nereids.rules.exploration.join;
 
+import org.apache.doris.nereids.annotation.Developing;
 import org.apache.doris.nereids.rules.Rule;
 import org.apache.doris.nereids.rules.RuleType;
 import org.apache.doris.nereids.rules.exploration.OneExplorationRuleFactory;
@@ -28,6 +29,7 @@ import org.apache.doris.nereids.trees.plans.logical.LogicalJoin;
 /**
  * Rule for busy-tree, exchange the children node.
  */
+@Developing
 public class JoinExchange extends OneExplorationRuleFactory {
     /*
      *        topJoin                      newTopJoin
@@ -37,7 +39,7 @@ public class JoinExchange extends OneExplorationRuleFactory {
      *   A      B  C      D          A      C      B      D
      */
     @Override
-    public Rule<Plan> build() {
+    public Rule build() {
         return innerLogicalJoin(innerLogicalJoin(), innerLogicalJoin()).then(topJoin -> {
             LogicalJoin<GroupPlan, GroupPlan> leftJoin = topJoin.left();
             LogicalJoin<GroupPlan, GroupPlan> rightJoin = topJoin.right();

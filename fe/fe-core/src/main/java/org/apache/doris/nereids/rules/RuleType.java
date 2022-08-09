@@ -18,7 +18,7 @@
 package org.apache.doris.nereids.rules;
 
 import org.apache.doris.nereids.pattern.PatternMatcher;
-import org.apache.doris.nereids.trees.TreeNode;
+import org.apache.doris.nereids.trees.plans.Plan;
 
 /**
  * Type of rules, each rule has its unique type.
@@ -33,6 +33,8 @@ public enum RuleType {
     BINDING_SORT_SLOT(RuleTypeClass.REWRITE),
     BINDING_PROJECT_FUNCTION(RuleTypeClass.REWRITE),
     BINDING_AGGREGATE_FUNCTION(RuleTypeClass.REWRITE),
+    BINDING_FILTER_FUNCTION(RuleTypeClass.REWRITE),
+
     RESOLVE_PROJECT_ALIAS(RuleTypeClass.REWRITE),
     RESOLVE_AGGREGATE_ALIAS(RuleTypeClass.REWRITE),
     PROJECT_TO_GLOBAL_AGGREGATE(RuleTypeClass.REWRITE),
@@ -41,12 +43,20 @@ public enum RuleType {
     COLUMN_PRUNE_PROJECTION(RuleTypeClass.REWRITE),
     // predicate push down rules
     PUSH_DOWN_PREDICATE_THROUGH_JOIN(RuleTypeClass.REWRITE),
+    PUSH_DOWN_PREDICATE_THROUGH_AGGREGATION(RuleTypeClass.REWRITE),
     // column prune rules,
     COLUMN_PRUNE_AGGREGATION_CHILD(RuleTypeClass.REWRITE),
     COLUMN_PRUNE_FILTER_CHILD(RuleTypeClass.REWRITE),
     COLUMN_PRUNE_SORT_CHILD(RuleTypeClass.REWRITE),
     COLUMN_PRUNE_JOIN_CHILD(RuleTypeClass.REWRITE),
-
+    // expression of plan rewrite
+    REWRITE_PROJECT_EXPRESSION(RuleTypeClass.REWRITE),
+    REWRITE_AGG_EXPRESSION(RuleTypeClass.REWRITE),
+    REWRITE_FILTER_EXPRESSION(RuleTypeClass.REWRITE),
+    REWRITE_JOIN_EXPRESSION(RuleTypeClass.REWRITE),
+    REORDER_JOIN(RuleTypeClass.REWRITE),
+    MERGE_CONSECUTIVE_FILTERS(RuleTypeClass.REWRITE),
+    MERGE_CONSECUTIVE_PROJECTS(RuleTypeClass.REWRITE),
     REWRITE_SENTINEL(RuleTypeClass.REWRITE),
 
     // exploration rules
@@ -58,9 +68,11 @@ public enum RuleType {
     // implementation rules
     LOGICAL_AGG_TO_PHYSICAL_HASH_AGG_RULE(RuleTypeClass.IMPLEMENTATION),
     LOGICAL_JOIN_TO_HASH_JOIN_RULE(RuleTypeClass.IMPLEMENTATION),
+    LOGICAL_JOIN_TO_NESTED_LOOP_JOIN_RULE(RuleTypeClass.IMPLEMENTATION),
     LOGICAL_PROJECT_TO_PHYSICAL_PROJECT_RULE(RuleTypeClass.IMPLEMENTATION),
     LOGICAL_FILTER_TO_PHYSICAL_FILTER_RULE(RuleTypeClass.IMPLEMENTATION),
     LOGICAL_SORT_TO_PHYSICAL_HEAP_SORT_RULE(RuleTypeClass.IMPLEMENTATION),
+    LOGICAL_LIMIT_TO_PHYSICAL_LIMIT_RULE(RuleTypeClass.IMPLEMENTATION),
     LOGICAL_OLAP_SCAN_TO_PHYSICAL_OLAP_SCAN_RULE(RuleTypeClass.IMPLEMENTATION),
     IMPLEMENTATION_SENTINEL(RuleTypeClass.IMPLEMENTATION),
 
@@ -82,8 +94,8 @@ public enum RuleType {
         return ruleTypeClass;
     }
 
-    public <INPUT_TYPE extends RULE_TYPE, OUTPUT_TYPE extends RULE_TYPE, RULE_TYPE extends TreeNode<RULE_TYPE>>
-            Rule<RULE_TYPE> build(PatternMatcher<INPUT_TYPE, OUTPUT_TYPE, RULE_TYPE> patternMatcher) {
+    public <INPUT_TYPE extends Plan, OUTPUT_TYPE extends Plan>
+            Rule build(PatternMatcher<INPUT_TYPE, OUTPUT_TYPE> patternMatcher) {
         return patternMatcher.toRule(this);
     }
 

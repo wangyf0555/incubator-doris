@@ -26,6 +26,7 @@
 #include "vec/exprs/vexpr_context.h"
 
 namespace doris::vectorized {
+class FileScanNode;
 class FileScanner {
 public:
     FileScanner(RuntimeState* state, RuntimeProfile* profile, const TFileScanRangeParams& params,
@@ -48,10 +49,13 @@ public:
     // Close this scanner
     virtual void close() = 0;
 
+    std::vector<bool>* mutable_runtime_filter_marks() { return &_runtime_filter_marks; }
+
 protected:
     virtual void _init_profiles(RuntimeProfile* profile) = 0;
 
     Status finalize_block(vectorized::Block* dest_block, bool* eof);
+    Status _fill_columns_from_path(vectorized::Block* output_block, size_t rows);
     Status init_block(vectorized::Block* block);
 
     std::unique_ptr<TextConverter> _text_converter;
@@ -73,7 +77,6 @@ protected:
 
     std::unique_ptr<RowDescriptor> _row_desc;
 
-    std::shared_ptr<MemTracker> _mem_tracker;
     // Mem pool used to allocate _src_tuple and _src_tuple_row
     std::unique_ptr<MemPool> _mem_pool;
 
@@ -96,10 +99,14 @@ protected:
     // slot_ids for parquet predicate push down are in tuple desc
     TupleId _tupleId;
 
+    // to record which runtime filters have been used
+    std::vector<bool> _runtime_filter_marks;
+
+    FileScanNode* _parent;
+
 private:
     Status _init_expr_ctxes();
     Status _filter_block(vectorized::Block* output_block);
-    Status _fill_columns_from_path(vectorized::Block* output_block);
 };
 
 } // namespace doris::vectorized

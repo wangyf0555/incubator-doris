@@ -19,7 +19,7 @@ package org.apache.doris.analysis;
 
 import org.apache.doris.catalog.AggregateFunction;
 import org.apache.doris.catalog.AliasFunction;
-import org.apache.doris.catalog.Catalog;
+import org.apache.doris.catalog.Env;
 import org.apache.doris.catalog.Function;
 import org.apache.doris.catalog.PrimitiveType;
 import org.apache.doris.catalog.ScalarFunction;
@@ -182,7 +182,7 @@ public class CreateFunctionStmt extends DdlStmt {
         functionName.analyze(analyzer);
 
         // check operation privilege
-        if (!Catalog.getCurrentCatalog().getAuth().checkGlobalPriv(ConnectContext.get(), PrivPredicate.ADMIN)) {
+        if (!Env.getCurrentEnv().getAuth().checkGlobalPriv(ConnectContext.get(), PrivPredicate.ADMIN)) {
             ErrorReport.reportAnalysisException(ErrorCode.ERR_SPECIFIC_ACCESS_DENIED_ERROR, "ADMIN");
         }
         // check argument
@@ -253,7 +253,8 @@ public class CreateFunctionStmt extends DdlStmt {
                 .hasVarArgs(argsDef.isVariadic()).intermediateType(intermediateType.getType())
                 .location(URI.create(userFile));
         String initFnSymbol = properties.get(INIT_KEY);
-        if (initFnSymbol == null && !(binaryType == TFunctionBinaryType.JAVA_UDF)) {
+        if (initFnSymbol == null && !(binaryType == TFunctionBinaryType.JAVA_UDF
+                || binaryType == TFunctionBinaryType.RPC)) {
             throw new AnalysisException("No 'init_fn' in properties");
         }
         String updateFnSymbol = properties.get(UPDATE_KEY);
@@ -270,7 +271,9 @@ public class CreateFunctionStmt extends DdlStmt {
         String removeFnSymbol = properties.get(REMOVE_KEY);
         String symbol = properties.get(SYMBOL_KEY);
         if (binaryType == TFunctionBinaryType.RPC && !userFile.contains("://")) {
-            checkRPCUdf(initFnSymbol);
+            if (initFnSymbol != null) {
+                checkRPCUdf(initFnSymbol);
+            }
             checkRPCUdf(updateFnSymbol);
             checkRPCUdf(mergeFnSymbol);
             if (serializeFnSymbol != null) {

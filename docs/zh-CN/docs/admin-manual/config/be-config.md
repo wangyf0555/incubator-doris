@@ -205,7 +205,7 @@ Metrics: {"filtered_rows":0,"input_row_num":3346807,"input_rowsets_count":42,"in
 
 ### `buffer_pool_clean_pages_limit`
 
-默认值：20G
+默认值：50%
 
 清理可能被缓冲池保存的Page
 
@@ -926,6 +926,12 @@ BE进程的文件句柄limit要求的下限
 
 每个磁盘的最大线程数也是每个磁盘的最大队列深度
 
+### `number_slave_replica_download_threads`
+
+默认值: 64
+
+每个BE节点上slave副本同步Master副本数据的线程数，用于单副本数据导入功能。
+
 ### `number_tablet_writer_threads`
 
 默认值：16
@@ -1107,6 +1113,36 @@ routine load任务的线程池大小。 这应该大于 FE 配置 'max_concurren
 默认值：false
 
 BE之间rpc通信是否序列化RowBatch，用于查询层之间的数据传输
+
+### `single_replica_load_brpc_port`
+
+* 类型: int32
+* 描述: 单副本数据导入功能中，Master副本和Slave副本之间通信的RPC端口。Master副本flush完成之后通过RPC通知Slave副本同步数据，以及Slave副本同步数据完成后通过RPC通知Master副本。系统为单副本数据导入过程中Master副本和Slave副本之间通信开辟了独立的BRPC线程池，以避免导入并发较大时副本之间的数据同步抢占导入数据分发和查询任务的线程资源。
+* 默认值: 9070
+
+### `single_replica_load_brpc_num_threads`
+
+* 类型: int32
+* 描述: 单副本数据导入功能中，Master副本和Slave副本之间通信的线程数量。导入并发增大时，可以适当调大该参数来保证Slave副本及时同步Master副本数据。
+* 默认值: 64
+
+### `single_replica_load_download_port`
+
+* 类型: int32
+* 描述: 单副本数据导入功能中，Slave副本通过HTTP从Master副本下载数据文件的端口。系统为单副本数据导入过程中Slave副本从Master副本下载数据文件开辟了独立的HTTP线程池，以避免导入并发较大时Slave副本下载数据文件抢占其他http任务的线程资源。
+* 默认值: 8050
+
+### `single_replica_load_download_num_workers`
+
+* 类型: int32
+* 描述: 单副本数据导入功能中，Slave副本通过HTTP从Master副本下载数据文件的线程数。导入并发增大时，可以适当调大该参数来保证Slave副本及时同步Master副本数据。
+* 默认值: 64
+
+### `slave_replica_writer_rpc_timeout_sec`
+
+* 类型: int32
+* 描述: 单副本数据导入功能中，Master副本和Slave副本之间通信的RPC超时时间。
+* 默认值: 60
 
 ### `sleep_one_second`
 + 类型：int32
@@ -1462,35 +1498,17 @@ webserver默认工作线程数
   ```
 * 默认值: 3
 
-### `track_new_delete`
+### `enable_tcmalloc_hook`
 
 * 类型：bool
 * 描述：是否Hook TCmalloc new/delete，目前在Hook中统计thread local MemTracker。
 * 默认值：true
-
-### `mem_tracker_level`
-
-* 类型: int16
-* 描述: MemTracker在Web页面上展示的级别，等于或低于这个级别的MemTracker会在Web页面上展示
-  ```
-    OVERVIEW = 0
-    TASK = 1
-    INSTANCE = 2
-    VERBOSE = 3
-  ```
-* 默认值: 0
 
 ### `mem_tracker_consume_min_size_bytes`
 
 * 类型: int32
 * 描述: TCMalloc Hook consume/release MemTracker时的最小长度，小于该值的consume size会持续累加，避免频繁调用MemTracker的consume/release，减小该值会增加consume/release的频率，增大该值会导致MemTracker统计不准，理论上一个MemTracker的统计值与真实值相差 = (mem_tracker_consume_min_size_bytes * 这个MemTracker所在的BE线程数)。
 * 默认值: 1048576
-
-### `memory_leak_detection`
-
-* 类型: bool
-* 描述: 是否启动内存泄漏检测，当 MemTracker 为负值时认为发生了内存泄漏，但实际 MemTracker 记录不准确时也会导致负值，所以这个功能处于实验阶段。
-* 默认值: false
 
 ### `max_segment_num_per_rowset`
 

@@ -21,11 +21,11 @@ import org.apache.doris.nereids.rules.RuleType;
 import org.apache.doris.nereids.trees.expressions.ExprId;
 import org.apache.doris.nereids.trees.expressions.NamedExpression;
 import org.apache.doris.nereids.trees.expressions.Slot;
-import org.apache.doris.nereids.trees.expressions.visitor.SlotExtractor;
 import org.apache.doris.nereids.trees.plans.GroupPlan;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.logical.LogicalJoin;
 import org.apache.doris.nereids.trees.plans.logical.LogicalProject;
+import org.apache.doris.nereids.util.SlotExtractor;
 
 import com.google.common.collect.ImmutableList;
 
@@ -79,11 +79,11 @@ public class PruneJoinChildrenColumns
         Plan rightPlan = joinPlan.right();
 
         if (leftInputs.size() != leftPlan.getOutput().size()) {
-            leftPlan = new LogicalProject(leftInputs, leftPlan);
+            leftPlan = new LogicalProject<>(leftInputs, leftPlan);
         }
 
         if (rightInputs.size() != rightPlan.getOutput().size()) {
-            rightPlan = new LogicalProject(rightInputs, rightPlan);
+            rightPlan = new LogicalProject<>(rightInputs, rightPlan);
         }
         return joinPlan.withChildren(ImmutableList.of(leftPlan, rightPlan));
     }

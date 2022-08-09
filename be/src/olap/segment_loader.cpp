@@ -32,8 +32,7 @@ void SegmentLoader::create_global_instance(size_t capacity) {
 }
 
 SegmentLoader::SegmentLoader(size_t capacity) {
-    _cache = std::unique_ptr<Cache>(
-            new_lru_cache("SegmentLoader:SegmentCache", capacity, LRUCacheType::NUMBER));
+    _cache = std::unique_ptr<Cache>(new_lru_cache("SegmentCache", capacity, LRUCacheType::NUMBER));
 }
 
 bool SegmentLoader::_lookup(const SegmentLoader::CacheKey& key, SegmentCacheHandle* handle) {
@@ -59,17 +58,16 @@ void SegmentLoader::_insert(const SegmentLoader::CacheKey& key, SegmentLoader::C
 }
 
 Status SegmentLoader::load_segments(const BetaRowsetSharedPtr& rowset,
-                                    SegmentCacheHandle* cache_handle,
-                                    const TabletSchema* read_tablet_schema, bool use_cache) {
-    SegmentLoader::CacheKey cache_key(rowset->rowset_id(), *read_tablet_schema);
-    if (use_cache && _lookup(cache_key, cache_handle)) {
+                                    SegmentCacheHandle* cache_handle, bool use_cache) {
+    SegmentLoader::CacheKey cache_key(rowset->rowset_id());
+    if (_lookup(cache_key, cache_handle)) {
         cache_handle->owned = false;
         return Status::OK();
     }
     cache_handle->owned = !use_cache;
 
     std::vector<segment_v2::SegmentSharedPtr> segments;
-    RETURN_NOT_OK(rowset->load_segments(&segments, read_tablet_schema));
+    RETURN_NOT_OK(rowset->load_segments(&segments));
 
     if (use_cache) {
         // memory of SegmentLoader::CacheValue will be handled by SegmentLoader

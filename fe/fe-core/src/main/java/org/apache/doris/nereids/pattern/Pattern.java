@@ -17,9 +17,7 @@
 
 package org.apache.doris.nereids.pattern;
 
-import org.apache.doris.nereids.memo.GroupExpression;
 import org.apache.doris.nereids.trees.AbstractTreeNode;
-import org.apache.doris.nereids.trees.TreeNode;
 import org.apache.doris.nereids.trees.plans.Plan;
 import org.apache.doris.nereids.trees.plans.PlanType;
 
@@ -27,14 +25,13 @@ import com.google.common.collect.ImmutableList;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
  * Pattern node used in pattern matching.
  */
-public class Pattern<TYPE extends NODE_TYPE, NODE_TYPE extends TreeNode<NODE_TYPE>>
-        extends AbstractTreeNode<Pattern<? extends NODE_TYPE, NODE_TYPE>> {
+public class Pattern<TYPE extends Plan>
+        extends AbstractTreeNode<Pattern<? extends Plan>> {
 
     public static final Pattern ANY = new Pattern(PatternType.ANY);
     public static final Pattern MULTI = new Pattern(PatternType.MULTI);
@@ -168,18 +165,13 @@ public class Pattern<TYPE extends NODE_TYPE, NODE_TYPE extends TreeNode<NODE_TYP
     }
 
     @Override
-    public Pattern<? extends NODE_TYPE, NODE_TYPE> withChildren(
-            List<Pattern<? extends NODE_TYPE, NODE_TYPE>> children) {
+    public Pattern<? extends Plan> withChildren(
+            List<Pattern<? extends Plan>> children) {
         throw new IllegalStateException("Pattern can not invoke withChildren");
     }
 
-    public Pattern<TYPE, NODE_TYPE> withPredicates(List<Predicate<TYPE>> predicates) {
+    public Pattern<TYPE> withPredicates(List<Predicate<TYPE>> predicates) {
         return new Pattern(patternType, planType, predicates, children.toArray(new Pattern[0]));
-    }
-
-    @Override
-    public Optional<GroupExpression> getGroupExpression() {
-        return Optional.empty();
     }
 
     public boolean hasMultiChild() {
@@ -198,7 +190,7 @@ public class Pattern<TYPE extends NODE_TYPE, NODE_TYPE extends TreeNode<NODE_TYP
         if (o == null || getClass() != o.getClass()) {
             return false;
         }
-        Pattern<?, ?> pattern = (Pattern<?, ?>) o;
+        Pattern<?> pattern = (Pattern<?>) o;
         return predicates.equals(pattern.predicates)
                 && patternType == pattern.patternType
                 && planType == pattern.planType;
